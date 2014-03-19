@@ -5,8 +5,13 @@
 #include "opencv2/core/core.hpp"
 #include "opencv2/highgui/highgui.hpp"
 #include "opencv2/highgui/highgui_c.h"
-#include "transform.h"
+#include "opencv2/imgproc/imgproc.hpp"
+#include "../inc/transform.h"
 typedef std::vector<cv::Mat> MatL;
+
+typedef struct {
+    double r,g,b;
+} COLOUR;
 
 class Ellipse
 {
@@ -85,7 +90,9 @@ public:
 
 	Ellipse(double initial_x, double initial_y, double initial_long_axis, double initial_short_axis, double initial_angle, double radius);		
 	void UpdateEllipseByAction(const cv::Mat& action);	
-	void UpdateRefEllipse(cv::Mat& points, cv::Mat& improvement);
+	void UpdateRefEllipse(cv::Mat& points, cv::Mat& motio_ratio, cv::Mat& maha_dist);
+	void MVEE(cv::Mat& P, cv::Mat& c, cv::Mat& A, double tolerance);
+	void diag(cv::Mat& input, cv::Mat& output);
 	// void SetTransform(double x, double y, double long_axis, double short_axis, double angle, cv::Mat& transform);
 	void SetCovariance(double long_axis, double short_axis, double angle, cv::Mat& cov);
 	void SetMu(double mu_x, double mu_y, cv::Mat& mu);
@@ -96,17 +103,22 @@ public:
 	bool CheckInsideEllipse(const cv::Mat& point, const cv::Mat& mu, const cv::Mat& cov_inv);
 	void DrawEllipse(cv::Mat& disp_img);
 	void DrawEllipse(cv::Mat& disp_img, double radius); // with external passed radius...
-	void GetKeyPointInEllipse(const cv::Mat& descriptor, const cv::Mat& key_point, cv::Mat& elips_descriptor, cv::Mat& elips_key_point, int curr_frame_flag);
-	void ClassifyPointsForReferenceFrame(MatL match_data, cv::Mat& classified_points, cv::Mat& improvement);
+	void DrawEllipse(cv::Mat& disp_img, double radius, COLOUR& color);
+	void GetKeyPointInEllipse(const cv::Mat& descriptor, const cv::Mat& key_point, cv::Mat& elips_descriptor, cv::Mat& elips_key_point, cv::Mat& elips_distance, int curr_frame_flag);
+	void ClassifyPointsForReferenceFrame(MatL match_data, cv::Mat& classified_points, cv::Mat& prev_classified_points, cv::Mat& maha_dist);
 	void SetRefEllipseParameters();
 	void SetConic(double x, double y, double long_axis, double short_axis, double angle, cv::Mat& conic);
 	cv::Mat ref_mu();
 	cv::Mat ref_cov();
+	cv::Mat mu();
+	cv::Mat cov();
 	void set_ref_mu(const cv::Mat& mu);
 	void set_ref_cov(const cv::Mat& cov);
 	void set_eta(double eta);
 	
 };
+
+
 
 #endif
 // cv::Mat ref_conic_;

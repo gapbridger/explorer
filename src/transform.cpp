@@ -138,6 +138,15 @@ cv::Mat Transform::TransformDataPointInv(cv::Mat& point, int curr_flag)
 	return transformed_point;
 }
 
+cv::Mat Transform::InterFrameTransformImg(cv::Mat& point)
+{
+	cv::Mat transformed_point;
+	cv::Mat transform;
+	cv::invert(transform_inv_, transform);	
+	transformed_point = transform * prev_transform_inv_ * point;			
+	return transformed_point;
+}
+
 // calculate gradients
 void Transform::CalcWXInvGradient(cv::Mat& transformed_point, cv::Mat& target_point, cv::Mat& feature)
 {
@@ -392,6 +401,11 @@ cv::Mat Transform::w_sy()
 cv::Mat Transform::transform_inv()
 {
 	return transform_inv_;
+}
+
+cv::Mat Transform::prev_transform_inv()
+{
+	return prev_transform_inv_;
 }
 
 void Transform::set_w_x(cv::Mat& w)

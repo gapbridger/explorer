@@ -1,11 +1,9 @@
 #include "../inc/fio.h"
 
-using namespace cv;
-using namespace std;
 
 // the additional declaration for separating template function in .h and .cpp files
-void FileIO::ReadMatInt(Mat& dst, int h, int w, string name){
-    ifstream file_pt((char*)name.c_str(), ios::in|ios::binary);
+void FileIO::ReadMatInt(cv::Mat& dst, int h, int w, std::string name){
+    std::ifstream file_pt((char*)name.c_str(), std::ios::in|std::ios::binary);
     for(int i = 0; i < h; i++){
         for(int j = 0; j < w; j++){
             file_pt.read(reinterpret_cast<char*>(&(dst.at<int>(i, j))), sizeof(int));
@@ -14,8 +12,20 @@ void FileIO::ReadMatInt(Mat& dst, int h, int w, string name){
     file_pt.close();
 }
 
-void FileIO::ReadMatFloat(Mat& dst, int h, int w, string name){
-    ifstream file_pt((char*)name.c_str(), ios::in|ios::binary);
+void FileIO::ReadMatFloat(cv::Mat& dst, int h, int w, std::string name){
+    std::ifstream file_pt((char*)name.c_str(), std::ios::in|std::ios::binary);
+    for(int i = 0; i < h; i++){
+        for(int j = 0; j < w; j++){
+            file_pt.read(reinterpret_cast<char*>(&(dst.at<float>(i, j))), sizeof(float));
+			// file_pt.read(reinterpret_cast<char*>(&(dst.at<double>(i, j))), sizeof(float));
+        }
+    }
+    file_pt.close();
+}
+
+void FileIO::ReadFloatMatToDouble(cv::Mat& dst, int h, int w, std::string name)
+{
+    std::ifstream file_pt((char*)name.c_str(), std::ios::in|std::ios::binary);
 	float a = 0;
     for(int i = 0; i < h; i++){
         for(int j = 0; j < w; j++){
@@ -27,8 +37,8 @@ void FileIO::ReadMatFloat(Mat& dst, int h, int w, string name){
     file_pt.close();
 }
 
-void FileIO::ReadMatDouble(Mat& dst, int h, int w, string name){
-    ifstream file_pt((char*)name.c_str(), ios::in|ios::binary);
+void FileIO::ReadMatDouble(cv::Mat& dst, int h, int w, std::string name){
+    std::ifstream file_pt((char*)name.c_str(), std::ios::in|std::ios::binary);
     for(int i = 0; i < h; i++){
         for(int j = 0; j < w; j++){
             file_pt.read(reinterpret_cast<char*>(&(dst.at<double>(i, j))), sizeof(double));
@@ -37,7 +47,7 @@ void FileIO::ReadMatDouble(Mat& dst, int h, int w, string name){
     file_pt.close();
 }
 
-void FileIO::WriteMatInt(Mat& src, int h, int w, string name){
+void FileIO::WriteMatInt(cv::Mat& src, int h, int w, std::string name){
 
     FILE* file_pt = fopen((char*)name.c_str(), "wb");
     for(int i = 0; i < h; i++){
@@ -48,7 +58,7 @@ void FileIO::WriteMatInt(Mat& src, int h, int w, string name){
     fclose(file_pt);
 }
 
-void FileIO::WriteMatFloat(Mat& src, int h, int w, string name){
+void FileIO::WriteMatFloat(cv::Mat& src, int h, int w, std::string name){
     FILE* file_pt = fopen((char*)name.c_str(), "wb");
     for(int i = 0; i < h; i++){
         for(int j = 0; j < w; j++){
@@ -58,7 +68,7 @@ void FileIO::WriteMatFloat(Mat& src, int h, int w, string name){
     fclose(file_pt);
 }
 
-void FileIO::RecordMatDouble(Mat& src, int h, int w, string name, int append_flag){
+void FileIO::RecordMatDouble(cv::Mat& src, int h, int w, std::string name, int append_flag){
   FILE* file_pt;
   if(append_flag)
     file_pt = fopen((char*)name.c_str(), "ab");
@@ -72,7 +82,7 @@ void FileIO::RecordMatDouble(Mat& src, int h, int w, string name, int append_fla
   fclose(file_pt);
 }
 
-void FileIO::AppendMatFloat(Mat& src, int h, int w, string name){
+void FileIO::AppendMatFloat(cv::Mat& src, int h, int w, std::string name){
     FILE* file_pt = fopen((char*)name.c_str(), "ab");
     for(int i = 0; i < h; i++){
         for(int j = 0; j < w; j++){
@@ -82,7 +92,7 @@ void FileIO::AppendMatFloat(Mat& src, int h, int w, string name){
     fclose(file_pt);
 }
 
-void FileIO::WriteMatDouble(Mat& src, int h, int w, string name){
+void FileIO::WriteMatDouble(cv::Mat& src, int h, int w, std::string name){
 
     FILE* file_pt = fopen((char*)name.c_str(), "wb");
     for(int i = 0; i < h; i++){

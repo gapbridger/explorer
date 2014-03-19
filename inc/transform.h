@@ -76,7 +76,8 @@ public:
 	void CalcTransformMatrixInv(cv::Mat& feature, cv::Mat& w_x, cv::Mat& w_y, cv::Mat& w_phi, cv::Mat& w_sx, cv::Mat& w_sy);	
 	cv::Mat EvaluateInvTransformation(cv::Mat& feature_float);	
 	cv::Mat TransformDataPointInv(cv::Mat& point, int curr_flag);
-	void SetLearningRates(double x_rate, double y_rate, double angle_rate, double sx_rate, double sy_double);
+	cv::Mat InterFrameTransformImg(cv::Mat& point);
+	void SetLearningRates(double x_rate, double y_rate, double angle_rate, double sx_rate, double sy_double);	
 	// copy to previous transformation
 	void CopyToPrev();
 	// helper functions
@@ -86,6 +87,7 @@ public:
 	cv::Mat w_sx();
 	cv::Mat w_sy();	
 	cv::Mat transform_inv();
+	cv::Mat prev_transform_inv();
 	void set_w_x(cv::Mat& w);
 	void set_w_y(cv::Mat& w);
 	void set_w_phi(cv::Mat& w);

@@ -18,16 +18,13 @@
 #include "opencv2/imgproc/types_c.h"
 #include "opencv2/nonfree/features2d.hpp"
 
-#include "fio.h"
-#include "loader.h"
-#include "transform.h"
-#include "ellipse.h"
+#include "../inc/fio.h"
+#include "../inc/loader.h"
+#include "../inc/transform.h"
+#include "../inc/ellipse.h"
 
 // typedef std::vector<double> fL;
 typedef std::vector<cv::DMatch> DMatchL;
-typedef struct {
-    double r,g,b;
-} COLOUR;
 
 class Explorer{
 private:
@@ -59,7 +56,9 @@ private:
 	cv::Mat elips_descriptors_;    
     cv::Mat elips_prev_descriptors_;
 	cv::Mat elips_key_points_;
-	cv::Mat elips_prev_key_points_;            
+	cv::Mat elips_prev_key_points_;     
+	cv::Mat elips_distance_;
+	// cv::Mat elips_prev_distance_;
     cv::Mat descriptors_;   
 	cv::Mat key_points_;    
     cv::Mat prev_descriptors_;    
@@ -70,7 +69,8 @@ private:
     cv::Mat prev_ref_point_;
 	cv::Mat feature_data_;
 	cv::Mat matched_points_;
-	cv::Mat improvement_;	
+	cv::Mat motion_ratio_;	
+	cv::Mat maha_dist_;
  
     cv::FlannBasedMatcher matcher_;
 
@@ -79,6 +79,8 @@ private:
 	MatL match_point_info_;
     MatL unique_match_point_;    
         
+	MatL descriptors_all_;
+	MatL key_points_all_;
     fL kernel_list_;
 	fL path_p_1_;
 	fL path_p_2_;
@@ -88,10 +90,11 @@ private:
 	double prev_target_p_1_;
 	double prev_target_p_2_;
 	int path_count_;
+	char dir_[40];
     
 public:
     // initialization
-    Explorer(int dir_id, int num_iteration, int expanding_period);
+    Explorer(int dir_id, int num_iteration, int expanding_period, char* dir);
     ~Explorer();
 	void SetFeature(cv::Mat& feature, int aim_idx, cv::Mat& prop, cv::Mat& home_prop);
 	void SetKernel(fL& kernel_list, cv::Mat& data, double* p_current_data, int dim_left, 
@@ -103,6 +106,8 @@ public:
 	void CopyToPrev();
 	void Train();	
 	void Test(int display_flag, int single_frame_flag, int start_idx, int end_idx, int test_idx, int test_flag, int record_img_flag); // last flag is used to signify whether use test proprioception or train proprioception
+	void PlotDiagnosis(int test_idx);
+	void PlotTransformationGrid();
 };
 
 struct DistCompare{
@@ -111,5 +116,6 @@ struct DistCompare{
         return a.at<double>(0, 0) < b.at<double>(0, 0);
     }
 };
+
 
 #endif

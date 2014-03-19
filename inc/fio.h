@@ -9,6 +9,7 @@ class FileIO{
 public:
     static void ReadMatInt(cv::Mat& dst, int h, int w, std::string name);
     static void ReadMatFloat(cv::Mat& dst, int h, int w, std::string name);
+	static void ReadFloatMatToDouble(cv::Mat& dst, int h, int w, std::string name);
     static void ReadMatDouble(cv::Mat& dst, int h, int w, std::string name);
     static void WriteMatInt(cv::Mat& src, int h, int w, std::string name);
     static void WriteMatFloat(cv::Mat& src, int h, int w, std::string name);
