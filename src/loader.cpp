@@ -427,8 +427,15 @@ void Loader::RecordSiftKeyPoints()
 	char input_dir[400];
 	char output_dir[400];
 	char tmp_dir[40];
-	int start_frame = 0; // 19201;
-	int end_frame = 16400; // 19000; // 23247; // 19228; // 11374;
+	strcpy(input_dir, common_data_prefix_);
+	strcat(input_dir, "num_data.bin");
+	cv::Mat num_data = cv::Mat::zeros(2, 1, CV_64F);
+	FileIO::ReadMatDouble(num_data, 2, 1, input_dir);
+	int num_train_data = (int)num_data.at<double>(0, 0); // 16400 * 19 / 20; // 17100; // 20250; // 17100; // 20250; // 20880; // 20250; // 17280; // 9900; // 18000;
+	int num_test_data = (int)num_data.at<double>(1, 0);
+
+	int start_frame = 0; // 16401; // 19201;
+	int end_frame = num_train_data + num_test_data; // 20000; // 19000; // 23247; // 19228; // 11374;
 	int image_width = 640;
 	int image_height = 480;
 	cv::Mat curr_img;
@@ -455,7 +462,7 @@ void Loader::RecordSiftKeyPoints()
 		strcpy(input_dir, common_data_prefix_);
 		strcat(input_dir, tmp_dir);
 		curr_img = cv::imread(input_dir, CV_LOAD_IMAGE_GRAYSCALE);				
-		sift_detector.detect(curr_img, key_point_list , mask);//, mask); // , evarBinary); // evDstBinaryCurr);
+		sift_detector.detect(curr_img, key_point_list); //  , mask);//, mask); // , evarBinary); // evDstBinaryCurr);
 		sift_extractor.compute(curr_img, key_point_list, descriptor);
 		// recording
 		// assign key points value

@@ -111,8 +111,9 @@ int main(int argc, char* argv[])
 	}
 	else if(train_flag == 3)	
 	{
-		explorer.PlotDiagnosis(test_idx);	
+		// explorer.PlotDiagnosis(test_idx);	
 		// explorer.PlotTransformationGrid();
+		explorer.ConvertRefCovToDistMetric();
 	}
 	else
 		exit(0);

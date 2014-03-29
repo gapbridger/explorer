@@ -152,12 +152,12 @@ void Ellipse::CopyToPrev()
 // draw the ellipses with previous or other ones...
 void Ellipse::DrawEllipse(cv::Mat& disp_img)
 {
-	cv::ellipse(disp_img, cv::Point2f(mu_x_, mu_y_), cv::Size(long_axis_ * radius_, short_axis_ * radius_), angle_ / PI * 180.0, 0.0, 360.0, cv::Scalar(190, 0, 190), 2);
+	cv::ellipse(disp_img, cv::Point2f(mu_x_, mu_y_), cv::Size(long_axis_ * radius_, short_axis_ * radius_), angle_ / PI * 180.0, 0.0, 360.0, cv::Scalar(255, 0, 0), 2);
 }
 
 void Ellipse::DrawEllipse(cv::Mat& disp_img, double radius)
 {
-	cv::ellipse(disp_img, cv::Point2f(mu_x_, mu_y_), cv::Size(long_axis_ * radius, short_axis_ * radius), angle_ / PI * 180.0, 0.0, 360.0, cv::Scalar(190, 0, 190), 2);
+	cv::ellipse(disp_img, cv::Point2f(mu_x_, mu_y_), cv::Size(long_axis_ * radius, short_axis_ * radius), angle_ / PI * 180.0, 0.0, 360.0, cv::Scalar(255, 0, 0), 2);
 }
 
 void Ellipse::DrawEllipse(cv::Mat& disp_img, double radius, COLOUR& color)

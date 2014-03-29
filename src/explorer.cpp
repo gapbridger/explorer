@@ -52,8 +52,14 @@ Explorer::Explorer
 	trend_number_ = 12;
 	num_iteration_ = num_iteration;
 	range_expanding_period_ = expanding_period;
-	num_train_data_ = 16400 * 19 / 20; // 17100; // 20250; // 17100; // 20250; // 20880; // 20250; // 17280; // 9900; // 18000;
-	num_test_data_ = 16400 / 20; // 1900; // 2250; // 1900; // 2250; // 2320; // 2250; // 1920; // 1100; // 2000;
+	char input_dir[400];
+	sprintf(input_dir, "D:/Document/HKUST/Year 5/Research/Data/Arm Images/");
+	strcat(input_dir, dir);
+	strcat(input_dir, "/num_data.bin");
+	cv::Mat num_data = cv::Mat::zeros(2, 1, CV_64F);
+	FileIO::ReadMatDouble(num_data, 2, 1, input_dir);
+	num_train_data_ = (int)num_data.at<double>(0, 0); // 16400 * 19 / 20; // 17100; // 20250; // 17100; // 20250; // 20880; // 20250; // 17280; // 9900; // 18000;
+	num_test_data_ = (int)num_data.at<double>(1, 0); // 16400 / 20; // 1900; // 2250; // 1900; // 2250; // 2320; // 2250; // 1920; // 1100; // 2000;
 	max_exploration_range_ = 1.0; // 1.00 // 1.41; // 0.71; // sqrt(2) should be fine... 0.5;
 	starting_exploration_range_ = 0.04; // 0.002; // 0.101;
 	avg_cost_ = 0;		
@@ -484,9 +490,9 @@ void Explorer::Train()
 	loader.LoadProprioception(num_train_data_, num_test_data_, train_prop_, test_prop_, home_prop_, train_target_idx, test_target_idx);	
 	loader.LoadLearningRates(elips);	
 	// for tool extension experiment only...
-	//loader.LoadWeightsForTest(elips.transform_, 1, dim_feature_);
-	//loader.LoadEllipse(elips);
-	//elips.SetRefEllipseParameters();
+	loader.LoadWeightsForTest(elips.transform_, 1, dim_feature_);
+	loader.LoadEllipse(elips);
+	elips.SetRefEllipseParameters();
 	// ********************************* //
 
 	// ***** try load all key points...******** //
@@ -755,7 +761,7 @@ void Explorer::Test(int display_flag, int single_frame_flag, int start_idx, int 
 		}
 		else
 		{
-			if(aim_idx % 500 == 0)
+			if(aim_idx % 10 == 0)
 				std::cout << "tested frame: " << aim_idx << std::endl;
 		}
 
@@ -780,7 +786,7 @@ void Explorer::PlotDiagnosis(int test_idx)
 	int img_height = 480;
 	int img_width = 640;
 	int update_gradient_flag = 0;
-
+	cv::Mat elips_ini = cv::Mat::zeros(5, 1, CV_64F);
 	//double initial_x = 300; // 380; // 300; // 218; 
 	//double initial_y = 193; // 220; // 260; // 230; 
 	//double initial_long_axis = 30; 
@@ -795,13 +801,22 @@ void Explorer::PlotDiagnosis(int test_idx)
 	//double initial_angle = 0; // -1.0 * PI / 3; // 1.0 * PI / 8.5; 
 	//double radius = 3.0;
 
+	sprintf(input_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/input/elips_ini_%d.bin", dir_id_);
+	FileIO::ReadMatDouble(elips_ini, 5, 1, input_dir);
 
-	double initial_x = 350; // 380; // 300; // 218; 
-	double initial_y = 160; // 220; // 260; // 230; 
-	double initial_long_axis = 40; 
-	double initial_short_axis = 40; 
-	double initial_angle = 0; // -1.0 * PI / 20; // 1.0 * PI / 8.5; 
-	double radius = 2.0;
+	double initial_x = elips_ini.at<double>(0, 0); // 380; // 300; // 218; 
+	double initial_y = elips_ini.at<double>(1, 0); // 220; // 260; // 230; 
+	double initial_long_axis = elips_ini.at<double>(2, 0); 
+	double initial_short_axis = elips_ini.at<double>(3, 0); 
+	double initial_angle = elips_ini.at<double>(4, 0); // -1.0 * PI / 20; // 1.0 * PI / 8.5; 
+	double radius = 3.0;
+
+	//double initial_x = 350; // 380; // 300; // 218; 
+	//double initial_y = 160; // 220; // 260; // 230; 
+	//double initial_long_axis = 40; 
+	//double initial_short_axis = 40; 
+	//double initial_angle = 0; // -1.0 * PI / 20; // 1.0 * PI / 8.5; 
+	//double radius = 2.0;
 
 	cv::Mat train_target_idx = cv::Mat::zeros(num_train_data_, 1, CV_64F);	
 	cv::Mat test_target_idx = cv::Mat::zeros(num_test_data_, 1, CV_64F);
@@ -809,6 +824,7 @@ void Explorer::PlotDiagnosis(int test_idx)
 	cv::Mat action = cv::Mat::zeros(dim_action_, 1, CV_64F);
 	cv::Mat disp_img = cv::Mat::zeros(img_height, img_width, CV_8UC3);
 	cv::Mat home_img = cv::Mat::zeros(img_height, img_width, CV_8UC3);
+	cv::Mat transform_inv = cv::Mat::zeros(3, 3, CV_64F);
 
 	Loader loader(dim_action_, trend_number_, dir_id_, dir_);
 	Ellipse elips(initial_x, initial_y, initial_long_axis, initial_short_axis, initial_angle, radius);
@@ -831,8 +847,9 @@ void Explorer::PlotDiagnosis(int test_idx)
 	// loader.LoadImage(home_frame_idx, home_img);
 	// cv::addWeighted(disp_img, 0.0, home_img, 1.0, 0.0, disp_img);
 
-	float diagnosis_idx[10] = {0, 10, 20, 30, 40, 50, 60, 80, 100, 146};
-	for(int i = 0; i < 10; i++)
+	int num_elips = 5;
+	float diagnosis_idx[5] = {0, 6, 11, 12, 20};
+	for(int i = 0; i < num_elips; i++)
 	{
 		loader.LoadWeightsForDiagnosis(elips.transform_, elips, 1, dim_feature_, diagnosis_idx[i]);
 		elips.SetRefEllipseParameters();
@@ -841,13 +858,18 @@ void Explorer::PlotDiagnosis(int test_idx)
 		// loader.LoadSiftKeyPoint(descriptors_, key_points_, aim_frame_idx);
 		action = elips.transform_.EvaluateInvTransformation(feature);
 		elips.UpdateEllipseByAction(action);  
+		if(i == 0 && test_idx == 0)
+			transform_inv = elips.transform_.transform_inv();
 		// elips.GetKeyPointInEllipse(descriptors_, key_points_, elips_descriptors_, elips_key_points_, elips_distance_, 1);
 		// EvaluateGradientAndUpdate(feature, update_gradient_flag, aim_idx, elips, 0);			
 		elips.CopyToPrev();
 		CopyToPrev();			
-		COLOUR c = GetColour(9 - i, 0, 9);		
+		COLOUR c = GetColour(num_elips - i, 1, num_elips);		
+		// if(i == 0)
 		elips.DrawEllipse(disp_img, 1.0, c); // draw ellipse				
 	}
+	sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/home_transform_inv.bin", dir_id_);
+	FileIO::WriteMatDouble(transform_inv, 3, 3, output_dir);
 
 	cv::imshow("explorer", disp_img); // show ellipse
 	cv::waitKey(0);
@@ -871,7 +893,7 @@ void Explorer::PlotTransformationGrid()
 	double current_data = 1.0;
 	double* p_current_data = &current_data;
 	fL kernel_list;
-	
+	cv::Mat elips_ini = cv::Mat::zeros(5, 1, CV_64F);
 
 	//double initial_x = 300; // 380; // 300; // 218; 
 	//double initial_y = 193; // 220; // 260; // 230; 
@@ -887,12 +909,15 @@ void Explorer::PlotTransformationGrid()
 	//double initial_angle = 0; // -1.0 * PI / 3; // 1.0 * PI / 8.5; 
 	//double radius = 3.0;
 
-	double initial_x = 350; // 380; // 300; // 218; 
-	double initial_y = 160; // 220; // 260; // 230; 
-	double initial_long_axis = 40; 
-	double initial_short_axis = 40; 
-	double initial_angle = 0; // -1.0 * PI / 20; // 1.0 * PI / 8.5; 
-	double radius = 2.0;
+	sprintf(input_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/input/elips_ini_%d.bin", dir_id_);
+	FileIO::ReadMatDouble(elips_ini, 5, 1, input_dir);
+
+	double initial_x = elips_ini.at<double>(0, 0); // 380; // 300; // 218; 
+	double initial_y = elips_ini.at<double>(1, 0); // 220; // 260; // 230; 
+	double initial_long_axis = elips_ini.at<double>(2, 0); 
+	double initial_short_axis = elips_ini.at<double>(3, 0); 
+	double initial_angle = elips_ini.at<double>(4, 0); // -1.0 * PI / 20; // 1.0 * PI / 8.5; 
+	double radius = 3.0;
 
 	cv::Mat train_target_idx = cv::Mat::zeros(num_train_data_, 1, CV_64F);	
 	cv::Mat test_target_idx = cv::Mat::zeros(num_test_data_, 1, CV_64F);
@@ -900,7 +925,22 @@ void Explorer::PlotTransformationGrid()
 	cv::Mat action = cv::Mat::zeros(dim_action_, 1, CV_64F);
 	cv::Mat grid_prop = cv::Mat::zeros(grid_number * grid_number, 2, CV_64F);
 	cv::Mat grid_mu = cv::Mat::zeros(grid_number * grid_number, 2, CV_64F);
-	cv::Mat disp_img = cv::Mat::zeros(img_height, img_width, CV_8UC3);
+	cv::Mat disp_img = cv::Mat::ones(img_height, img_width, CV_8UC3);
+	
+	for(int i = 0; i < 480; i++)
+	{
+		for(int j = 0; j < 640; j++)
+		{
+			disp_img.at<cv::Vec3b>(i, j)[0] *= 1;
+			disp_img.at<cv::Vec3b>(i, j)[1] *= 255;
+			disp_img.at<cv::Vec3b>(i, j)[2] *= 255;
+		}
+	}
+
+	// disp_img = disp_img * 128;
+
+	std::cout << disp_img.channels() << std::endl;
+	// disp_img = disp_img * 255; // white background...
 	cv::Mat curr_mu = cv::Mat::zeros(1, 2, CV_64F);
 	// just plot the centers... hypothetical.. do not need the real data...
 
@@ -923,9 +963,10 @@ void Explorer::PlotTransformationGrid()
 		}
 	}
 
-	aim_idx = 0;	
+	aim_idx = 0;
 	aim_frame_idx = train_target_idx.at<double>(aim_idx, 0);
-	loader.LoadImage(aim_frame_idx, disp_img);
+	// loader.LoadImage(aim_frame_idx, disp_img);
+	std::cout << disp_img.channels() << std::endl;
 	
 	for(int idx = 0; idx < grid_number * grid_number; idx++)
 	{
@@ -947,7 +988,8 @@ void Explorer::PlotTransformationGrid()
 		curr_mu.copyTo(grid_mu.rowRange(idx, idx + 1));
 
 		COLOUR c = GetColour(1, 0, 1);		
-		elips.DrawEllipse(disp_img, 1.0, c); // draw ellipse		
+		elips.DrawEllipse(disp_img, 1.0, c); // draw ellipse	
+		std::cout << disp_img.channels() << std::endl;
 		// elips.DrawEllipse(disp_img, 1.0); // draw ellipse		
 	}
 
@@ -958,4 +1000,122 @@ void Explorer::PlotTransformationGrid()
 	cv::waitKey(0);
 	
 	std::cout << "diagnosis finished..." << std::endl;	
+}
+
+void Explorer::ConvertRefCovToDistMetric()
+{
+	char input_dir[400];
+	char output_dir[400];
+	int iterations = 1000000;
+	cv::Mat elips_ini = cv::Mat::zeros(5, 1, CV_64F);
+	cv::Mat tmp_data = cv::Mat::zeros(iterations, 1, CV_64F);
+	cv::Mat ref_cov_data = cv::Mat::zeros(iterations, 4, CV_64F);
+	cv::Mat ref_mu_data = cv::Mat::zeros(iterations, 2, CV_64F);
+	cv::Mat img_cov_data = cv::Mat::zeros(iterations, 4, CV_64F);
+	cv::Mat img_mu_data = cv::Mat::zeros(iterations, 2, CV_64F);
+	cv::Mat train_target_idx = cv::Mat::zeros(num_train_data_, 1, CV_64F);	
+	cv::Mat test_target_idx = cv::Mat::zeros(num_test_data_, 1, CV_64F);
+	cv::Mat feature = cv::Mat::zeros(dim_feature_, 1, CV_64F);
+	cv::Mat action = cv::Mat::zeros(dim_action_, 1, CV_64F);
+
+	sprintf(input_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/cov_1_1_trend.bin", dir_id_);
+	FileIO::ReadMatDouble(tmp_data, iterations, 1, input_dir);
+	tmp_data.copyTo(ref_cov_data.colRange(0, 1));
+
+	sprintf(input_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/cov_1_2_trend.bin", dir_id_);
+	FileIO::ReadMatDouble(tmp_data, iterations, 1, input_dir);
+	tmp_data.copyTo(ref_cov_data.colRange(1, 2));
+
+	sprintf(input_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/cov_2_1_trend.bin", dir_id_);
+	FileIO::ReadMatDouble(tmp_data, iterations, 1, input_dir);
+	tmp_data.copyTo(ref_cov_data.colRange(2, 3));
+
+	sprintf(input_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/cov_2_2_trend.bin", dir_id_);
+	FileIO::ReadMatDouble(tmp_data, iterations, 1, input_dir);
+	tmp_data.copyTo(ref_cov_data.colRange(3, 4));
+
+	sprintf(input_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/mu_1_trend.bin", dir_id_);
+	FileIO::ReadMatDouble(tmp_data, iterations, 1, input_dir);
+	tmp_data.copyTo(ref_mu_data.colRange(0, 1));
+
+	sprintf(input_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/mu_2_trend.bin", dir_id_);
+	FileIO::ReadMatDouble(tmp_data, iterations, 1, input_dir);
+	tmp_data.copyTo(ref_mu_data.colRange(1, 2));
+
+	sprintf(input_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/input/elips_ini_%d.bin", dir_id_);
+	FileIO::ReadMatDouble(elips_ini, 5, 1, input_dir);
+
+	double initial_x = elips_ini.at<double>(0, 0); // 380; // 300; // 218; 
+	double initial_y = elips_ini.at<double>(1, 0); // 220; // 260; // 230; 
+	double initial_long_axis = elips_ini.at<double>(2, 0); 
+	double initial_short_axis = elips_ini.at<double>(3, 0); 
+	double initial_angle = elips_ini.at<double>(4, 0); // -1.0 * PI / 20; // 1.0 * PI / 8.5; 
+	double radius = 3.0;
+	cv::Mat mu = cv::Mat::zeros(2, 1, CV_64F);
+	cv::Mat cov = cv::Mat::zeros(2, 2, CV_64F);
+	cv::Mat img_mu = cv::Mat::zeros(2, 1, CV_64F);
+	cv::Mat img_cov = cv::Mat::zeros(2, 2, CV_64F);
+	cv::Mat img_cov_inv = cv::Mat::zeros(2, 2, CV_64F);
+	Ellipse elips(initial_x, initial_y, initial_long_axis, initial_short_axis, initial_angle, radius);
+	Loader loader(dim_action_, trend_number_, dir_id_, dir_);
+
+	loader.FormatWeightsForTestDirectory();
+	loader.FormatTrendDirectory();
+	loader.LoadProprioception(num_train_data_, num_test_data_, train_prop_, test_prop_, home_prop_, train_target_idx, test_target_idx);
+	// loader.LoadWeightsForTest(elips.transform_, 1, dim_feature_);
+
+	SetFeature(feature, 0, train_prop_, home_prop_);
+	action = elips.transform_.EvaluateInvTransformation(feature);
+	elips.UpdateEllipseByAction(action);
+
+
+	for(int i = 0; i < iterations; i++)	
+	{
+		mu.at<double>(0, 0) = ref_mu_data.at<double>(i, 0);
+		mu.at<double>(1, 0) = ref_mu_data.at<double>(i, 1);
+		cov.at<double>(0, 0) = ref_cov_data.at<double>(i, 0);
+		cov.at<double>(0, 1) = ref_cov_data.at<double>(i, 1);
+		cov.at<double>(1, 0) = ref_cov_data.at<double>(i, 2);
+		cov.at<double>(1, 1) = ref_cov_data.at<double>(i, 3);
+		elips.set_ref_mu(mu);
+		elips.set_ref_cov(cov);
+		elips.SetRefEllipseParameters();
+		elips.UpdateEllipseByAction(action);
+		img_mu = elips.mu();
+		img_cov = elips.cov();
+		cv::invert(img_cov, img_cov_inv);
+		img_mu_data.at<double>(i, 0) = img_mu.at<double>(0, 0);
+		img_mu_data.at<double>(i, 1) = img_mu.at<double>(1, 0);
+		img_cov_data.at<double>(i, 0) = img_cov_inv.at<double>(0, 0);
+		img_cov_data.at<double>(i, 1) = img_cov_inv.at<double>(0, 1);
+		img_cov_data.at<double>(i, 2) = img_cov_inv.at<double>(1, 0);
+		img_cov_data.at<double>(i, 3) = img_cov_inv.at<double>(1, 1);
+
+		if(i % 10000 == 1)
+			std::cout << "iteration " << i << "..." << std::endl;		
+	}
+	sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/img_mu_1_trend.bin", dir_id_);
+	img_mu_data.colRange(0, 1).copyTo(tmp_data);
+	FileIO::WriteMatDouble(tmp_data, iterations, 1, output_dir);
+
+	sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/img_mu_2_trend.bin", dir_id_);
+	img_mu_data.colRange(1, 2).copyTo(tmp_data);
+	FileIO::WriteMatDouble(tmp_data, iterations, 1, output_dir);
+
+	sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/img_cov_1_1_trend.bin", dir_id_);
+	img_cov_data.colRange(0, 1).copyTo(tmp_data);
+	FileIO::WriteMatDouble(tmp_data, iterations, 1, output_dir);
+
+	sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/img_cov_1_2_trend.bin", dir_id_);
+	img_cov_data.colRange(1, 2).copyTo(tmp_data);
+	FileIO::WriteMatDouble(tmp_data, iterations, 1, output_dir);
+
+	sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/img_cov_2_1_trend.bin", dir_id_);
+	img_cov_data.colRange(2, 3).copyTo(tmp_data);
+	FileIO::WriteMatDouble(tmp_data, iterations, 1, output_dir);
+
+	sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/img_cov_2_2_trend.bin", dir_id_);
+	img_cov_data.colRange(3, 4).copyTo(tmp_data);
+	FileIO::WriteMatDouble(tmp_data, iterations, 1, output_dir);
+	
 }

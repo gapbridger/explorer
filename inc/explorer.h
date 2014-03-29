@@ -108,6 +108,8 @@ public:
 	void Test(int display_flag, int single_frame_flag, int start_idx, int end_idx, int test_idx, int test_flag, int record_img_flag); // last flag is used to signify whether use test proprioception or train proprioception
 	void PlotDiagnosis(int test_idx);
 	void PlotTransformationGrid();
+	void ConvertRefCovToDistMetric();
+
 };
 
 struct DistCompare{
