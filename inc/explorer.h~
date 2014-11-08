@@ -76,7 +76,6 @@ private:
 	cv::Mat motion_ratio_;	
 	cv::Mat maha_dist_;
 
-	cv::Mat feature_home_;
     cv::FlannBasedMatcher matcher_;
 
     DMatchL matches_;    
@@ -112,7 +111,6 @@ private:
 	cv::Mat ini_scale_;
 	double image_width_;
 	double image_height_;
-	double center_value_;
 
 	cv::Mat rs_indices_;
 	cv::Mat rs_dists_;
@@ -121,32 +119,11 @@ private:
     int prop_dim_;
 	bool update_flag_;
 	std::vector<bool> path_update_vector_;
-
-	double upper_bound_;
-	double lower_bound_;
-	double sin_scale_;
-	double cos_scale_;
-
-	cv::Mat feature_mean_new_;
-	cv::Mat feature_mean_old_;
-	cv::Mat feature_cov_new_;
-	cv::Mat feature_cov_old_;
-
-	cv::Mat feature_eigen_value_;
-	cv::Mat feature_eigen_vec_;
-	double threashold_;
-	int actual_feature_dim_;
-
-
-
-
 public:
     // initialization
     Explorer(int dir_id, int num_iteration, int expanding_period, int load_all_flag, char* dir);
     ~Explorer();
 	void SetFeature(cv::Mat& feature, int aim_idx, cv::Mat& prop, cv::Mat& home_prop);
-	void SetFeatureSinusoidal(cv::Mat& feature, int aim_idx, cv::Mat& prop, cv::Mat& home_prop);
-	void SetFeatureSinusoidal(cv::Mat& home_feature);
 	void SetKernel(fL& kernel_list, cv::Mat& data, double* p_current_data, int dim_left, 
 		int curr_pos, int data_length, int kernel_dim, int value_flag);	
 	int GenerateAimIndex(std::mt19937& engine, int explore_iter);
@@ -163,9 +140,6 @@ public:
 	void PlotDiagnosis(int test_idx);
 	void PlotTransformationGrid();
 	void ConvertRefCovToDistMetric();
-	void RecursiveLeastSquareTest();
-	void SaveSinusoidalFeature();
-	void OnlinePCA(cv::Mat& feature, int iteration, double threshold);
 
 };
 

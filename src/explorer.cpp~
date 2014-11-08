@@ -42,7 +42,7 @@ Explorer::Explorer(int dir_id, int num_iteration, int expanding_period, int load
 {    
 	dir_id_ = dir_id;
 	dim_action_ = 6; // dimension of action
-	dim_feature_ = 8; // 8; // 8; // 10;
+	dim_feature_ = 10;
 	trend_number_ = 15; // 14
 	num_iteration_ = num_iteration;
 	range_expanding_period_ = expanding_period;
@@ -55,8 +55,8 @@ Explorer::Explorer(int dir_id, int num_iteration, int expanding_period, int load
 	num_train_data_ = (int)num_data.at<double>(0, 0); // 16400 * 19 / 20; // 17100; // 20250; // 17100; // 20250; // 20880; // 20250; // 17280; // 9900; // 18000;
 	num_test_data_ = (int)num_data.at<double>(1, 0); // 16400 / 20; // 1900; // 2250; // 1900; // 2250; // 2320; // 2250; // 1920; // 1100; // 2000;
 	max_exploration_range_ = 1.0; // 1.00 // 1.41; // 0.71; // sqrt(2) should be fine... 0.5;
-	starting_exploration_range_ = 0.04; // 0.2; // 0.02; // 0.002; // 0.101;
-    starting_exploration_range_rotation_ = 0.04;
+	starting_exploration_range_ = 0.2; // 0.02; // 0.002; // 0.101;
+    starting_exploration_range_rotation_ = 0.2;
     max_exploration_range_rotation_ = 4.5;
 	avg_cost_ = 0;		
 	path_count_ = 0;
@@ -68,14 +68,13 @@ Explorer::Explorer(int dir_id, int num_iteration, int expanding_period, int load
 	prev_target_p_2_ = 0;
 	load_all_flag_ = load_all_flag;
 
-	prop_dim_ = 2; // 3;
+	prop_dim_ = 3;
 	action_ = cv::Mat::zeros(dim_action_, 1, CV_64F);	
 	train_prop_ = cv::Mat::zeros(num_train_data_, prop_dim_, CV_64F);
 	test_prop_ = cv::Mat::zeros(num_test_data_, prop_dim_, CV_64F);	
-	center_value_ = 70.0; // 55.0; // 70.0;
+
 	target_ = cv::Mat::zeros(1, prop_dim_, CV_64F);
-	prev_target_ = cv::Mat::ones(1, prop_dim_, CV_64F);
-	prev_target_ = prev_target_ * center_value_;
+	prev_target_ = cv::Mat::zeros(1, prop_dim_, CV_64F);
 
 
 	home_prop_ = cv::Mat::zeros(1, 2, CV_64F);	
@@ -89,17 +88,6 @@ Explorer::Explorer(int dir_id, int num_iteration, int expanding_period, int load
 	prop_dist_ = cv::Mat::zeros(num_train_data_, 1, CV_64F);
 	aim_idx_matrix_ = cv::Mat::zeros(num_train_data_, 1, CV_32S);
 	feature_data_ = cv::Mat::zeros(2, 1, CV_64F);
-	feature_home_ = cv::Mat::zeros(dim_feature_, 1, CV_64F);
-	upper_bound_ = 80.0; // 70.0; // 80.0;
-	lower_bound_ = 60.0; // 40.0; // 60.0;
-	double sin_1 = abs(sin(upper_bound_ / 180.0 * PI) - sin(center_value_ / 180.0 * PI));
-	double sin_2 = abs(sin(lower_bound_ / 180.0 * PI) - sin(center_value_ / 180.0 * PI));
-	sin_scale_ = sin_1 > sin_2 ? sin_1 : sin_2;
-
-	double cos_1 = abs(cos(upper_bound_  / 180.0 * PI) - cos(center_value_ / 180.0 * PI));
-	double cos_2 = abs(cos(lower_bound_ / 180.0 * PI) - cos(center_value_ / 180.0 * PI));
-	cos_scale_ = cos_1 > cos_2 ? cos_1 : cos_2;
-	// SetFeatureSinusoidal(feature_home_); need to be reset back...
 
 	rs_indices_ = cv::Mat::zeros(num_train_data_, 1, CV_32S);
 	rs_dists_ = cv::Mat::zeros(num_train_data_, 1, CV_32F);
@@ -126,12 +114,9 @@ Explorer::Explorer(int dir_id, int num_iteration, int expanding_period, int load
 
 	// set initial transformation
 	// suppose range is 0 to image_width_ - 1 and 0 to image_height_ - 1
-	ini_translate_.at<double>(0, 2) = -1; ini_translate_.at<double>(1, 2) = -1; // maybe change starting point 1 to 0...
+	ini_translate_.at<double>(0, 2) = -1; ini_translate_.at<double>(1, 2) = -1;
 	ini_scale_.at<double>(0, 0) = 2 / (image_width_ - 1); ini_scale_.at<double>(1, 1) = 2 / (image_height_ - 1);
 	ini_transformation_ = ini_translate_ * ini_rotation_ * ini_scale_;
-	threashold_ = 1 - 1e-5;
-
-	actual_feature_dim_ = 8;
 }
 
 Explorer::~Explorer(){
@@ -180,7 +165,20 @@ void Explorer::SetFeature(cv::Mat& feature, int aim_idx, cv::Mat& prop, cv::Mat&
 {
 	double delta_p1 = prop.at<double>(aim_idx, 0) - home_prop.at<double>(0, 0);
 	double delta_p2 = prop.at<double>(aim_idx, 1) - home_prop.at<double>(0, 1);
-	
+
+	/*delta_p1 = (delta_p1 * 10 + 70) / 180 * PI;
+	delta_p2 = (delta_p2 * 10 + 70) / 180 * PI;
+
+	feature.at<double>(0, 0) = 0.1;
+	feature.at<double>(1, 0) = cos(delta_p1);
+	feature.at<double>(2, 0) = sin(delta_p1);
+	feature.at<double>(3, 0) = cos(delta_p2);
+	feature.at<double>(4, 0) = sin(delta_p2);
+	feature.at<double>(5, 0) = cos(delta_p1) * cos(delta_p2);
+	feature.at<double>(6, 0) = cos(delta_p1) * sin(delta_p2);
+	feature.at<double>(7, 0) = sin(delta_p1) * cos(delta_p2);
+	feature.at<double>(8, 0) = sin(delta_p1) * sin(delta_p2);*/
+
 	double current_data = 1.0;
 	double* p_current_data = &current_data;
 	int kernel_dim = 3;
@@ -194,147 +192,47 @@ void Explorer::SetFeature(cv::Mat& feature, int aim_idx, cv::Mat& prop, cv::Mat&
 	for(int i = 0; i < kernel_list_.size(); i++)
 		feature.at<double>(i, 0) = kernel_list_[i];
 }
-//
-//void Explorer::SetFeatureSinusoidal(cv::Mat& feature, int aim_idx, cv::Mat& prop, cv::Mat& home_prop)
-//{
-//	double delta_p1 = prop.at<double>(aim_idx, 0) - home_prop.at<double>(0, 0);
-//	double delta_p2 = prop.at<double>(aim_idx, 1) - home_prop.at<double>(0, 1);
-//	cv::Mat p1 = cv::Mat::zeros(3, 1, CV_64F);
-//	cv::Mat p2 = cv::Mat::zeros(3, 1, CV_64F);
-//	int dim_joint = 3;	
-//	p1.at<double>(0, 0) = 1.0; 
-//	p1.at<double>(1, 0) = sin(prop.at<double>(aim_idx, 0) / 180.0 * PI) - sin(center_value_ / 180.0 * PI); 
-//	p1.at<double>(2, 0) = cos(prop.at<double>(aim_idx, 0) / 180.0 * PI) - cos(center_value_ / 180.0 * PI);
-//	p2.at<double>(0, 0) = 1.0; 
-//	p2.at<double>(1, 0) = sin(prop.at<double>(aim_idx, 1) / 180.0 * PI) - sin(center_value_ / 180.0 * PI); 
-//	p2.at<double>(2, 0) = cos(prop.at<double>(aim_idx, 1) / 180.0 * PI) - cos(center_value_ / 180.0 * PI);
-//
-//	// feature = cv::Mat::zeros(, 1, CV_64F);
-//	for(int i = 0; i < dim_joint; i++)
-//		for(int j = 0; j < dim_joint; j++)
-//			feature.at<double>(i * dim_joint + j, 0) = p1.at<double>(i, 0) * p2.at<double>(j, 0);
-//	feature.at<double>(0, 0) = 0.0;
-//}
-
-void Explorer::SetFeatureSinusoidal(cv::Mat& feature, int aim_idx, cv::Mat& prop, cv::Mat& home_prop)
-{
-	cv::Mat p1 = cv::Mat::zeros(3, 1, CV_64F);
-	cv::Mat p2 = cv::Mat::zeros(3, 1, CV_64F);
-	int dim_joint = 3;	
-
-	p1.at<double>(0, 0) = 1.0; 
-	p1.at<double>(1, 0) = sin(prop.at<double>(aim_idx, 0) / 180.0 * PI); 
-	p1.at<double>(2, 0) = cos(prop.at<double>(aim_idx, 0) / 180.0 * PI);
-	p2.at<double>(0, 0) = 1.0; 
-	p2.at<double>(1, 0) = sin(prop.at<double>(aim_idx, 1) / 180.0 * PI);
-	p2.at<double>(2, 0) = cos(prop.at<double>(aim_idx, 1) / 180.0 * PI);
-
-	/*p1.at<double>(0, 0) = 1.0; 
-	p1.at<double>(1, 0) = sin(prop.at<double>(aim_idx, 0) / 180.0 * PI) - sin(center_value_ / 180.0 * PI); 
-	p1.at<double>(2, 0) = cos(prop.at<double>(aim_idx, 0) / 180.0 * PI) - cos(center_value_ / 180.0 * PI);
-	p2.at<double>(0, 0) = 1.0; 
-	p2.at<double>(1, 0) = sin(prop.at<double>(aim_idx, 1) / 180.0 * PI) - sin(center_value_ / 180.0 * PI);
-	p2.at<double>(2, 0) = cos(prop.at<double>(aim_idx, 1) / 180.0 * PI) - cos(center_value_ / 180.0 * PI);*/
-
-	/*feature.at<double>(0, 0) = p1.at<double>(0, 0) * p2.at<double>(2, 0);
-	feature.at<double>(1, 0) = p1.at<double>(2, 0) * p2.at<double>(0, 0);
-	feature.at<double>(2, 0) = p1.at<double>(1, 0) * p2.at<double>(1, 0);
-	feature.at<double>(3, 0) = p1.at<double>(1, 0) * p2.at<double>(2, 0);
-	feature.at<double>(4, 0) = p1.at<double>(2, 0) * p2.at<double>(1, 0);
-	feature.at<double>(5, 0) = p1.at<double>(2, 0) * p2.at<double>(2, 0);*/
-
-
-	// feature = cv::Mat::zeros(, 1, CV_64F);
-	for(int i = 0; i < dim_joint; i++) {
-		for(int j = 0; j < dim_joint; j++) {
-			if(!(i == 0 && j == 0))
-				feature.at<double>(i * dim_joint + j - 1, 0) = p1.at<double>(i, 0) * p2.at<double>(j, 0);
-		}
-	}
-	feature = feature - feature_home_;
-	// feature.at<double>(0, 0) = 0.01;
-	// feature = feature.mul(scale);
-	// double a = feature.at<double>(3, 0);
-	// double b = feature.at<double>(2, 0);
-}
-
-void Explorer::SetFeatureSinusoidal(cv::Mat& home_feature)
-{
-	cv::Mat p1 = cv::Mat::zeros(3, 1, CV_64F);
-	cv::Mat p2 = cv::Mat::zeros(3, 1, CV_64F);
-	int dim_joint = 3;	
-	p1.at<double>(0, 0) = 1.0; 
-	p1.at<double>(1, 0) = sin(center_value_ / 180.0 * PI); 
-	p1.at<double>(2, 0) = cos(center_value_ / 180.0 * PI);
-	p2.at<double>(0, 0) = 1.0; 
-	p2.at<double>(1, 0) = sin(center_value_ / 180.0 * PI); 
-	p2.at<double>(2, 0) = cos(center_value_ / 180.0 * PI);
-
-	// feature = cv::Mat::zeros(, 1, CV_64F);
-
-	/*home_feature.at<double>(0, 0) = p1.at<double>(0, 0) * p2.at<double>(2, 0);
-	home_feature.at<double>(1, 0) = p1.at<double>(2, 0) * p2.at<double>(0, 0);
-	home_feature.at<double>(2, 0) = p1.at<double>(1, 0) * p2.at<double>(1, 0);
-	home_feature.at<double>(3, 0) = p1.at<double>(1, 0) * p2.at<double>(2, 0);
-	home_feature.at<double>(4, 0) = p1.at<double>(2, 0) * p2.at<double>(1, 0);
-	home_feature.at<double>(5, 0) = p1.at<double>(2, 0) * p2.at<double>(2, 0);*/
-	for(int i = 0; i < dim_joint; i++) {
-		for(int j = 0; j < dim_joint; j++) {
-			// if(i != 0 || j != 0)
-			if(!(i == 0 && j == 0))
-				home_feature.at<double>(i * dim_joint + j - 1, 0) = p1.at<double>(i, 0) * p2.at<double>(j, 0);
-		}
-	}
-}
 
 int Explorer::GenerateAimIndexKDTree(std::mt19937& engine, cv::flann::Index& kd_trees, std::vector<int>& path, int current_iteration, bool* update_flag)
 {
 	int aim_idx = 0;
 	double current_range = 0;
-    // double current_range_rotation = 0;
-	double scale = 10; // 15; // 10; // add hoc fix of the new scaling problem due to change of sinusoidal basis
-	double center = center_value_; // add hoc fix
-	double max_speed = 0.6 * scale; // 0.4 * scale
-    // double max_rotation_speed = 0.1; // 4.0 / 90.0 * 2.0; // 2.0 / 90.0 * 2.0
+    double current_range_rotation = 0;
+	double max_speed = 0.4;
+    double max_rotation_speed = 2.0 / 90.0 * 2.0;
 	double path_length = 0;
-	// double radius = 0.2;
+	double radius = 0.2;
 	int num_frame_path = 0;
 	int prop_dim = train_prop_.cols;
-    // double rotation_speed = 0;
-	// rotation is for the wrist rotating experiment...
-	// for normal exploration we don't need this
+    double rotation_speed = 0;
 	// generate path
 	if(path.size() == 0)
 	{		
         // planar exploration range
 		current_range = starting_exploration_range_ + (max_exploration_range_ - starting_exploration_range_) * current_iteration / range_expanding_period_;	
 		current_range = current_range > max_exploration_range_ ? max_exploration_range_ : current_range;
-		std::uniform_real_distribution<double> uniform(-scale * current_range + center, scale * current_range + center);  	
+		std::uniform_real_distribution<double> uniform(-1.0 * current_range, 1.0 * current_range);	  	
         // rotation exploration range
-        /*current_range_rotation = starting_exploration_range_rotation_ + (max_exploration_range_rotation_ - starting_exploration_range_rotation_) * current_iteration / range_expanding_period_;	
+        current_range_rotation = starting_exploration_range_rotation_ + (max_exploration_range_rotation_ - starting_exploration_range_rotation_) * current_iteration / range_expanding_period_;	
 		current_range_rotation = current_range_rotation > max_exploration_range_rotation_ ? max_exploration_range_rotation_ : current_range_rotation;
-		std::uniform_real_distribution<double> uniform_rotation(-1.0 * current_range_rotation, 1.0 * current_range_rotation);	  */
+		std::uniform_real_distribution<double> uniform_rotation(-1.0 * current_range_rotation, 1.0 * current_range_rotation);	  
         // first attempt to get a target	
-        target_.at<double>(0, 0) = uniform(engine);	
-		target_.at<double>(0, 1) = uniform(engine); 
-		// target_.at<double>(0, 2) = uniform_rotation(engine);
+        target_.at<double>(0, 0) = uniform(engine);	target_.at<double>(0, 1) = uniform(engine); target_.at<double>(0, 2) = uniform_rotation(engine);
 		path_length = cv::norm(target_.colRange(0, 2) - prev_target_.colRange(0, 2), cv::NORM_L2);
 		num_frame_path = (int)(path_length / max_speed) + 1;
-        //rotation_speed = abs(target_.at<double>(0, 2) - prev_target_.at<double>(0, 2)) / num_frame_path;
+        rotation_speed = abs(target_.at<double>(0, 2) - prev_target_.at<double>(0, 2)) / num_frame_path;
         // if target doesn't satisfy the requirement
-   //     while(rotation_speed > max_rotation_speed)
-   //     {
-   //         target_.at<double>(0, 0) = uniform(engine);
-			//target_.at<double>(0, 1) = uniform(engine); 
-			//// target_.at<double>(0, 2) = uniform_rotation(engine);
-   //         path_length = cv::norm(target_.colRange(0, 2) - prev_target_.colRange(0, 2), cv::NORM_L2);
-   //         num_frame_path = (int)(path_length / max_speed) + 1;
-   //         rotation_speed = abs(target_.at<double>(0, 2) - prev_target_.at<double>(0, 2)) / num_frame_path;
-   //     }
+        while(rotation_speed > max_rotation_speed)
+        {
+            target_.at<double>(0, 0) = uniform(engine);	target_.at<double>(0, 1) = uniform(engine); target_.at<double>(0, 2) = uniform_rotation(engine);
+            path_length = cv::norm(target_.colRange(0, 2) - prev_target_.colRange(0, 2), cv::NORM_L2);
+            num_frame_path = (int)(path_length / max_speed) + 1;
+            rotation_speed = abs(target_.at<double>(0, 2) - prev_target_.at<double>(0, 2)) / num_frame_path;
+        }
 
 		path.clear();
 		path_update_vector_.clear();
-		// std::vector<double> prev_rotation(num_frame_path);
+		std::vector<double> prev_rotation(num_frame_path);
 		for(int i = 1; i <= num_frame_path; i++)
 		{
 			cv::Mat tmp_target = cv::Mat::zeros(1, prop_dim, CV_64F);
@@ -355,6 +253,98 @@ int Explorer::GenerateAimIndexKDTree(std::mt19937& engine, cv::flann::Index& kd_
 	return aim_idx;
 }
 
+int Explorer::GenerateAimIndex(std::mt19937& engine, int current_iteration)
+{
+	int aim_idx = 0;   	
+	double current_range = 0;	
+	double interval_range_low = 0;
+	double interval_range_high = 0;
+	double dist = 0;
+	current_range = starting_exploration_range_ + (max_exploration_range_ - starting_exploration_range_) * current_iteration / range_expanding_period_;	
+	current_range = current_range > max_exploration_range_ ? max_exploration_range_ : current_range;
+	std::uniform_real_distribution<double> uniform(-1.0 * current_range, 1.0 * current_range);
+	interval_range_low = current_range / 4.5;
+	interval_range_high = current_range / 3.5;
+	/*curr_prop_.at<double>(0, 0) = uniform(engine); 
+	curr_prop_.at<double>(0, 1) = uniform(engine);*/
+
+	// ensure interval...
+	do
+	{
+		target_p_1_ = uniform(engine);
+		target_p_2_ = uniform(engine);
+		dist = sqrt(pow(target_p_1_ - prev_target_p_1_, 2) + pow(target_p_2_ - prev_target_p_2_, 2));
+	}
+	while(dist < interval_range_low || dist > interval_range_high);
+	curr_prop_.at<double>(0, 0) = target_p_1_; 
+	curr_prop_.at<double>(0, 1) = target_p_2_;
+	prev_target_p_1_ = target_p_1_;
+	prev_target_p_2_ = target_p_2_;	
+
+	//*************************//
+
+	curr_prop_matrix_ = repeat(curr_prop_, num_train_data_, 1);
+	prop_diff_ = train_prop_ - curr_prop_matrix_;
+	prop_diff_ = prop_diff_.mul(prop_diff_);
+	reduce(prop_diff_, prop_dist_, 1, CV_REDUCE_SUM);
+	sortIdx(prop_dist_, aim_idx_matrix_, CV_SORT_EVERY_COLUMN + CV_SORT_ASCENDING);	
+	aim_idx = (int)aim_idx_matrix_.at<int>(0, 0);		
+	return aim_idx;
+}
+
+void Explorer::GenerateLinePath(fL& path_p_1, fL& path_p_2, double target_p_1, double target_p_2, double prev_target_p_1, double prev_target_p_2)
+{		
+	double max_speed = 8 / 20.0;
+	double path_length = sqrt(pow(target_p_1 - prev_target_p_1, 2) + pow(target_p_2 - prev_target_p_2, 2));
+	int num_frame_path = (int)(path_length / max_speed) + 1;
+
+	path_p_1.clear();
+	path_p_2.clear();
+
+	for(int i = 1; i <= num_frame_path; i++)
+	{
+		path_p_1.push_back(prev_target_p_1 + (target_p_1 - prev_target_p_1) * i / num_frame_path);
+		path_p_2.push_back(prev_target_p_2 + (target_p_2 - prev_target_p_2) * i / num_frame_path);
+	}
+
+}
+
+int Explorer::GenerateAimIndexLinePath(std::mt19937& engine, int current_iteration)
+{
+	int aim_idx = 0;
+	double current_range = 0;
+	
+	current_range = starting_exploration_range_ + (max_exploration_range_ - starting_exploration_range_) * current_iteration / range_expanding_period_;	
+	current_range = current_range > max_exploration_range_ ? max_exploration_range_ : current_range;
+	std::uniform_real_distribution<double> uniform(-1.0 * current_range, 1.0 * current_range);	  	
+	
+	// generate path
+	if(path_count_ == 0)
+	{
+		target_p_1_ = uniform(engine);
+		target_p_2_ = uniform(engine);
+		GenerateLinePath(path_p_1_, path_p_2_, target_p_1_, target_p_2_, prev_target_p_1_, prev_target_p_2_);
+		prev_target_p_1_ = target_p_1_;
+		prev_target_p_2_ = target_p_2_;
+		path_count_ = path_p_1_.size();
+	}
+
+	curr_prop_.at<double>(0, 0) = path_p_1_[path_p_1_.size() - path_count_]; 
+	curr_prop_.at<double>(0, 1) = path_p_2_[path_p_1_.size() - path_count_];
+	path_count_--;
+	// path_p_1_.erase(path_p_1_.begin());
+	// path_p_2_.erase(path_p_2_.begin());
+
+	curr_prop_matrix_ = repeat(curr_prop_, num_train_data_, 1);
+	prop_diff_ = train_prop_ - curr_prop_matrix_;
+	prop_diff_ = prop_diff_.mul(prop_diff_);
+	reduce(prop_diff_, prop_dist_, 1, CV_REDUCE_SUM);
+	sortIdx(prop_dist_, aim_idx_matrix_, CV_SORT_EVERY_COLUMN + CV_SORT_ASCENDING);	
+	aim_idx = (int)aim_idx_matrix_.at<int>(0, 0);
+
+	return aim_idx;
+
+}
 
 void Explorer::EvaluateGradientAndUpdate(cv::Mat& feature, int update_flag, int aim_idx, Ellipse& elips, int iteration_count)
 {	
@@ -486,7 +476,7 @@ void Explorer::EvaluateGradientAndUpdate(cv::Mat& feature, int update_flag, int 
 				}
 			}	
 			// update weights
-			elips.transform_.UpdateWeightBatch(iteration_count, dim_feature_);
+			elips.transform_.UpdateWeightBatch();
 			// classify points in reference frame
 			elips.ClassifyPointsHomeEllipse(unique_match_point_, matched_points_, motion_ratio_, maha_dist_);
 			// update ellipse by the matched points
@@ -538,8 +528,8 @@ void Explorer::Train()
 	int aim_idx = 0;	
 	int aim_frame_idx = 0;
 	int display_interval = 500;
-	int write_trend_interval = 5000;
-	int write_diagnosis_interval = 5000;
+	int write_trend_interval = 1000;
+	int write_diagnosis_interval = 2500;
 	int percentage = 0; 		
 	unsigned long iteration_count = 0;		
 	bool append_flag = false;	
@@ -551,12 +541,8 @@ void Explorer::Train()
 	// keep the exploration in a small range...	
 	std::mt19937 engine(rd_());		
 	cv::Mat train_target_idx = cv::Mat::zeros(num_train_data_, 1, CV_64F);		
-	cv::Mat test_target_idx = cv::Mat::zeros(num_test_data_, 1, CV_64F);	
-	cv::Mat train_feature_mat = cv::Mat::zeros(num_train_data_, dim_feature_, CV_64F);			
-	cv::Mat test_feature_mat = cv::Mat::zeros(num_test_data_, dim_feature_, CV_64F);	
+	cv::Mat test_target_idx = cv::Mat::zeros(num_test_data_, 1, CV_64F);		
 	cv::Mat feature = cv::Mat::zeros(dim_feature_, 1, CV_64F);		
-	cv::Mat feature_home = cv::Mat::zeros(dim_feature_, 1, CV_64F);
-	// SetFeatureSinusoidal(feature_home);
 	cv::Mat action = cv::Mat::zeros(dim_action_, 1, CV_64F);	
 	cv::Mat cov = cv::Mat::zeros(2, 2, CV_64F);
 	cv::Mat mu = cv::Mat::zeros(2, 1, CV_64F);
@@ -575,7 +561,6 @@ void Explorer::Train()
 	// loader.FormatWeightsForDiagnosisDirectory();
 	loader.LoadProprioception(num_train_data_, num_test_data_, train_prop_, test_prop_, home_prop_, train_target_idx, test_target_idx);	
 	loader.LoadLearningRates(elips);	
-	loader.LoadPropSinusoidalFeature(train_feature_mat, test_feature_mat);
 	// for tool extension experiment only...
 	/*loader.LoadWeightsForTest(elips.transform_, 1, dim_feature_);
 	loader.LoadEllipse(elips);	
@@ -598,7 +583,7 @@ void Explorer::Train()
 	
 	// ***** try load all key points...******** //
 	descriptors_all_.clear(); key_points_all_.clear();
-	int shift = 0;//10;
+	int shift = 10;
 	if(load_all_flag_)
 		loader.LoadAllSiftKeyPoint(descriptors_all_, key_points_all_, 0 + shift, num_train_data_ + num_test_data_ + shift, ini_transformation_); // 23248); // num_train_data_ + num_test_data_);
 	// main loop	
@@ -631,12 +616,7 @@ void Explorer::Train()
 		// act & evaluate gradient
 		if(iteration_count != 0)
 		{
-			// SetFeatureSinusoidal(feature, aim_idx, train_prop_, home_prop_);
-			feature = train_feature_mat.rowRange(aim_idx, aim_idx + 1).clone();
-			feature = feature.t();
-			// OnlinePCA(feature, iteration_count, threashold_);
-			// feature = feature - feature_home;	
-			// feature dimension problem...
+			SetFeature(feature, aim_idx, train_prop_, home_prop_);
 			elips.transform_.CalcTransformInv(feature);
 			elips.TransformEllipse();				
 			elips.GetKeyPointInEllipse(descriptors_, key_points_, elips_descriptors_, elips_key_points_, elips_distance_, 1);				
@@ -646,9 +626,6 @@ void Explorer::Train()
 		{
 			// only for the first iteration...
 			elips.GetKeyPointInEllipse(descriptors_, key_points_, elips_descriptors_, elips_key_points_, elips_distance_, 1);
-			feature = train_feature_mat.rowRange(aim_idx, aim_idx + 1).clone();
-			feature = feature.t();
-			// OnlinePCA(feature, iteration_count, threashold_);
 		}		
 
 		// copy to previous				
@@ -700,99 +677,6 @@ void Explorer::Train()
 	loader.SaveTrend(trend_array, trend_number_, append_flag);  
 }
 
-void Explorer::OnlinePCA(cv::Mat& feature, int iteration, double threshold)
-{
-	int count = iteration + 1;
-	if(count == 1)
-	{
-		feature_mean_old_ = cv::Mat::zeros(feature.rows, feature.cols, CV_64F);
-		feature_mean_new_ = cv::Mat::zeros(feature.rows, feature.cols, CV_64F);
-		feature.copyTo(feature_mean_old_);
-		feature.copyTo(feature_mean_new_);
-		feature_cov_old_ = cv::Mat::zeros(feature.rows, feature.rows, CV_64F);
-		feature_cov_new_ = cv::Mat::zeros(feature.rows, feature.rows, CV_64F);
-		feature_eigen_value_ = cv::Mat::zeros(feature.rows, feature.rows, CV_64F);
-		feature_eigen_vec_ = cv::Mat::zeros(feature.rows, feature.rows, CV_64F);
-	}
-	else
-	{
-		feature_mean_new_ = feature_mean_old_ + (feature - feature_mean_old_) / count;
-		feature_cov_new_ = feature_cov_old_ + (feature - feature_mean_old_) * (feature - feature_mean_new_).t();
-		feature_mean_new_.copyTo(feature_mean_old_);
-		feature_cov_new_.copyTo(feature_cov_old_);
-
-		/*cv::Mat tmp_mean;
-		cv::reduce(feature, tmp_mean, 0, CV_REDUCE_AVG);
-		cv::Mat tmp_data = feature - cv::repeat(tmp_mean, feature.rows, 1);
-		cv::Mat tmp_cov = tmp_data.t() * tmp_data / tmp_data.rows;*/
-		eigen(feature_cov_new_, feature_eigen_value_, feature_eigen_vec_);
-		cv::Mat eigen_value_sum;
-		cv::Mat current_sum;
-		cv::reduce(feature_eigen_value_, eigen_value_sum, 0, CV_REDUCE_SUM);
-		int num_dim = 1;
-		// eigen values are in descending order...
-		for(int i = 0; i < feature_eigen_value_.rows; i++)
-		{
-			cv::reduce(feature_eigen_value_.rowRange(0, i + 1), current_sum, 0, CV_REDUCE_SUM);
-			double current_portion = current_sum.at<double>(0, 0) / eigen_value_sum.at<double>(0, 0);
-			if(current_portion > threshold)
-			{
-				// std::cout << "current portion: " << current_portion << std::endl;
-				break;
-			}
-			else
-				num_dim++;
-		}
-		actual_feature_dim_ = num_dim > actual_feature_dim_ ? num_dim : actual_feature_dim_;
-		// eigen vectors are stored in rows... descending order, keep the rows
-		cv::Mat projection_vectors = feature_eigen_vec_.rowRange(0, actual_feature_dim_);
-		feature = projection_vectors * feature;
-	}
-}
-
-void Explorer::SaveSinusoidalFeature()
-{
-	// only work for 2dof...
-	cv::Mat train_target_idx = cv::Mat::zeros(num_train_data_, 1, CV_64F);		
-	cv::Mat train_feature_mat = cv::Mat::zeros(num_train_data_, dim_feature_, CV_64F);		
-	cv::Mat test_target_idx = cv::Mat::zeros(num_test_data_, 1, CV_64F);	
-	cv::Mat test_feature_mat = cv::Mat::zeros(num_test_data_, dim_feature_, CV_64F);	
-	cv::Mat feature = cv::Mat::zeros(dim_feature_, 1, CV_64F);		
-	cv::Mat scale = cv::Mat::zeros(1, dim_feature_, CV_64F);		
-	
-	Loader loader(dim_action_, trend_number_, dir_id_, dir_);	
-	loader.FormatWeightsForTestDirectory();
-	loader.FormatTrendDirectory();
-	// loader.FormatWeightsForDiagnosisDirectory();
-	loader.LoadProprioception(num_train_data_, num_test_data_, train_prop_, test_prop_, home_prop_, train_target_idx, test_target_idx);	
-	SetFeatureSinusoidal(feature_home_);
-
-	for(int i = 0; i < num_train_data_; i++)
-	{
-		SetFeatureSinusoidal(feature, i, train_prop_, home_prop_);		
-		cv::Mat tmp = feature.t();
-		tmp.copyTo(train_feature_mat.rowRange(i, i + 1));
-	}
-
-	// do pca...
-
-	/*cv::Mat tmp = abs(train_feature_mat);
-	cv::reduce(tmp, scale, 0, CV_REDUCE_MAX);
-	cv::divide(train_feature_mat, cv::repeat(scale, train_feature_mat.rows, 1),train_feature_mat);*/
-	for(int i = 0; i < num_test_data_; i++)
-	{
-		SetFeatureSinusoidal(feature, i, test_prop_, home_prop_);		
-		cv::Mat tmp = feature.t();
-		tmp.copyTo(test_feature_mat.rowRange(i, i + 1));
-	}
-	/*tmp = abs(test_feature_mat);
-	cv::reduce(tmp, scale, 0, CV_REDUCE_MAX);
-	cv::divide(test_feature_mat, cv::repeat(scale, test_feature_mat.rows, 1),test_feature_mat);*/
-
-	loader.SavePropSinusoidalFeature(train_feature_mat, test_feature_mat);
-
-}
-
 void Explorer::Test(int display_flag, int single_frame_flag, int start_idx, int end_idx, int test_idx, int test_flag, int record_img_flag)
 {
 	char input_dir[400];		
@@ -808,10 +692,6 @@ void Explorer::Test(int display_flag, int single_frame_flag, int start_idx, int 
 	cv::Mat train_target_idx = cv::Mat::zeros(num_train_data_, 1, CV_64F);	
 	cv::Mat test_target_idx = cv::Mat::zeros(num_test_data_, 1, CV_64F);
 	cv::Mat feature = cv::Mat::zeros(dim_feature_, 1, CV_64F);
-	cv::Mat feature_home = cv::Mat::zeros(dim_feature_, 1, CV_64F);
-	cv::Mat train_feature_mat = cv::Mat::zeros(num_train_data_, dim_feature_, CV_64F);			
-	cv::Mat test_feature_mat = cv::Mat::zeros(num_test_data_, dim_feature_, CV_64F);	
-	// SetFeatureSinusoidal(feature_home);
 	cv::Mat action = cv::Mat::zeros(dim_action_, 1, CV_64F);
 	cv::Mat disp_img = cv::Mat::zeros(img_height, img_width, CV_8UC3);
 
@@ -823,14 +703,11 @@ void Explorer::Test(int display_flag, int single_frame_flag, int start_idx, int 
 	loader.LoadProprioception(num_train_data_, num_test_data_, train_prop_, test_prop_, home_prop_, train_target_idx, test_target_idx);
 	loader.LoadWeightsForTest(elips.transform_, 1, dim_feature_);
 	loader.LoadEllipse(elips);	
-	loader.LoadPropSinusoidalFeature(train_feature_mat, test_feature_mat);
 	elips.set_a_home(1);
 	elips.set_inv_a_home();
 	elips.set_a();
 	elips.set_inv_a();	
 	elips.UpdateEllipseVisualizationParameters(0);
-
-	
 	// elips.SetRefEllipseParameters();
 
 
@@ -850,19 +727,15 @@ void Explorer::Test(int display_flag, int single_frame_flag, int start_idx, int 
 	if(test_flag)
 	{
 		aim_frame_idx = test_target_idx.at<double>(aim_idx, 0);
-		// SetFeatureSinusoidal(feature, aim_idx, test_prop_, home_prop_);		
-		feature = test_feature_mat.rowRange(aim_idx, aim_idx + 1).clone();
-		feature = feature.t();
+		SetFeature(feature, aim_idx, test_prop_, home_prop_);		
 	}
 	else
 	{
 		aim_frame_idx = train_target_idx.at<double>(aim_idx, 0);
 		// aim_frame_idx = aim_idx;
-		// SetFeatureSinusoidal(feature, aim_idx, train_prop_, home_prop_);		
-		feature = train_feature_mat.rowRange(aim_idx, aim_idx + 1).clone();
-		feature = feature.t();
+		SetFeature(feature, aim_idx, train_prop_, home_prop_);		
 	}
-	// feature = feature - feature_home;
+
 	loader.LoadSiftKeyPoint(descriptors_, key_points_, aim_frame_idx, ini_transformation_);
 	/*cv::Mat tmp_key_points = cv::Mat::zeros(key_points_.rows, key_points_.cols, CV_32F);
 	key_points_.copyTo(tmp_key_points);
@@ -883,19 +756,15 @@ void Explorer::Test(int display_flag, int single_frame_flag, int start_idx, int 
 		if(test_flag)
 		{
 			aim_frame_idx = test_target_idx.at<double>(aim_idx, 0);
-			// SetFeatureSinusoidal(feature, aim_idx, test_prop_, home_prop_);		
-			feature = test_feature_mat.rowRange(aim_idx, aim_idx + 1).clone();
-			feature = feature.t();
+			SetFeature(feature, aim_idx, test_prop_, home_prop_);		
 		}
 		else
 		{
 			aim_frame_idx = train_target_idx.at<double>(aim_idx, 0);
 			// aim_frame_idx = aim_idx;
-			// SetFeatureSinusoidal(feature, aim_idx, train_prop_, home_prop_);		
-			feature = train_feature_mat.rowRange(aim_idx, aim_idx + 1).clone();
-			feature = feature.t();
+			SetFeature(feature, aim_idx, train_prop_, home_prop_);		
 		}
-		// feature = feature - feature_home;
+
 		loader.LoadSiftKeyPoint(descriptors_, key_points_, aim_frame_idx, ini_transformation_);		
 		// act & evaluate gradient						
 		elips.transform_.CalcTransformInv(feature);
@@ -968,60 +837,6 @@ void Explorer::Test(int display_flag, int single_frame_flag, int start_idx, int 
 	std::cout << "test finished..." << std::endl;	
 }
 
-void Explorer::RecursiveLeastSquareTest() // (int display_flag, int single_frame_flag, int start_idx, int end_idx, int test_idx, int test_flag, int record_img_flag)
-{
-	char input_dir[400];		
-	char output_dir[400];				
-	int img_height = 480;
-	int img_width = 640;	
-	int radius = 3.0;
-	cv::Mat elips_ini = cv::Mat::zeros(5, 1, CV_64F);
-	cv::Mat train_target_idx = cv::Mat::zeros(num_train_data_, 1, CV_64F);	
-	cv::Mat test_target_idx = cv::Mat::zeros(num_test_data_, 1, CV_64F);
-	cv::Mat feature = cv::Mat::zeros(dim_feature_, 1, CV_64F);
-	cv::Mat action = cv::Mat::zeros(dim_action_, 1, CV_64F);
-
-	Loader loader(dim_action_, trend_number_, dir_id_, dir_);
-	Ellipse elips(initial_x_, initial_y_, initial_long_axis_, initial_short_axis_, initial_phi_, radius, ini_transformation_);
-
-	loader.FormatWeightsForTestDirectory();
-	loader.FormatTrendDirectory();
-	loader.LoadProprioception(num_train_data_, num_test_data_, train_prop_, test_prop_, home_prop_, train_target_idx, test_target_idx);
-	loader.LoadWeightsForTest(elips.transform_, 1, dim_feature_);
-
-	int num_weights = 6;
-	int feature_dim = 10;
-	cv::Mat y = cv::Mat::zeros(num_train_data_, num_weights, CV_64F);
-	cv::Mat x = cv::Mat::zeros(num_train_data_, feature_dim, CV_64F);
-	cv::Mat tmp_transform = cv::Mat::zeros(3, 3, CV_64F);
-	cv::Mat tmp_feature = cv::Mat::zeros(1, feature_dim, CV_64F);
-
-	for(int idx = 0; idx < num_train_data_; idx++)
-	{
-		SetFeatureSinusoidal(feature, idx, train_prop_, home_prop_);
-		elips.transform_.CalcTransformInv(feature);
-		tmp_transform = elips.transform_.transform_inv() - cv::Mat::eye(3, 3, CV_64F);		
-		tmp_transform = tmp_transform.rowRange(0, 2).reshape(1, 1);
-		tmp_feature = feature.t();
-		tmp_transform.copyTo(y.rowRange(idx, idx + 1));		
-		tmp_feature.copyTo(x.rowRange(idx, idx + 1));
-	}
-	
-	sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/x.bin", dir_id_);
-	FileIO::WriteMatDouble(x, num_train_data_, feature_dim, output_dir);
-	
-	sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/y.bin", dir_id_);
-	FileIO::WriteMatDouble(y, num_train_data_, num_weights, output_dir);
-
-	// actually not necessary for testing the recursive least squares...
-	/*loader.LoadEllipse(elips);	
-	elips.set_a_home(1);
-	elips.set_inv_a_home();
-	elips.set_a();
-	elips.set_inv_a();	
-	elips.UpdateEllipseVisualizationParameters(0);*/
-}
-
 // temporary function to get video images...
 void Explorer::GetVideoImages()
 {
@@ -1068,7 +883,7 @@ void Explorer::GetVideoImages()
 		{
 			// aim_idx = i * repeat + k + 14000; // GenerateAimIndexLinePath(engine, 1000000);
 			aim_frame_idx = i * repeat + k + shift; // train_target_idx.at<double>(aim_idx, 0);			
-			SetFeatureSinusoidal(feature, aim_frame_idx, train_prop_, home_prop_);
+			SetFeature(feature, aim_frame_idx, train_prop_, home_prop_);
 			elips.transform_.CalcTransformInv(feature);
 			elips.TransformEllipse();				
 			elips.UpdateEllipseVisualizationParameters(0);

@@ -1,130 +1,92 @@
 #include "../inc/transform.h"
 
-Transform::Transform(double initial_x, double initial_y, double initial_long_axis, double initial_short_axis, double initial_angle) : 
-	ini_x_(initial_x), 
-	ini_y_(initial_y),
-	ini_sx_(initial_long_axis),
-	ini_sy_(initial_short_axis),
-	ini_phi_(initial_angle)
+Transform::Transform()
 {
-	input_dim_ = 10;
+	// 
+	input_dim_ = 8; // 8; // 8;
 	output_dim_ = 1;
 	transform_dim_ = 3;
+	// learning rates
+	w_0_0_rate_ = 0;
+	w_0_1_rate_ = 0;
+	w_0_2_rate_ = 0;
+	w_1_0_rate_ = 0;
+	w_1_1_rate_ = 0;
+	w_1_2_rate_ = 0;	
+	// weights
+	w_0_0_ = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
+	w_0_1_ = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
+	w_0_2_ = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
+	w_1_0_ = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
+	w_1_1_ = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
+	w_1_2_ = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
+	// gradients
+	w_0_0_grad_ = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
+	w_0_1_grad_ = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
+	w_0_2_grad_ = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
+	w_1_0_grad_ = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
+	w_1_1_grad_ = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
+	w_1_2_grad_ = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
 
-	alpha_ = 0.2; // randomly picked learning rate...
-
-	// initial parameters
-	/*ini_x_ = 218; 
-	ini_y_ = 230; 
-	ini_phi_ = 1.0 * Pi / 8.5; 
-	ini_sx_ = 30; 
-	ini_sy_ = 22;  */
-
-	w_x_rate_ = 0;
-	w_y_rate_ = 0;
-	w_angle_rate_ = 0;
-	w_sx_rate_ = 0;
-	w_sy_rate_ = 0;
-
-	w_x_ = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
-	w_y_ = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
-	w_phi_ = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
-	w_sx_ = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
-	w_sy_ = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
-
-	w_x_grad_ = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
-	w_y_grad_ = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
-	w_phi_grad_ = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
-	w_sx_grad_ = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
-	w_sy_grad_ = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
-
+	w_grad_ = cv::Mat::zeros(input_dim_ * 6, output_dim_, CV_64F);
+	fisher_inv_ = cv::Mat::eye(input_dim_ * 6, input_dim_ * 6, CV_64F);
+	// matrix elements
+	element_0_0_ = cv::Mat::zeros(1, 1, CV_64F);
+	element_0_1_ = cv::Mat::zeros(1, 1, CV_64F);
+	element_0_2_ = cv::Mat::zeros(1, 1, CV_64F);
+	element_1_0_ = cv::Mat::zeros(1, 1, CV_64F);
+	element_1_1_ = cv::Mat::zeros(1, 1, CV_64F);
+	element_1_2_ = cv::Mat::zeros(1, 1, CV_64F);
+	// feature
 	feature_ = cv::Mat::zeros(input_dim_, output_dim_, CV_64F);
-	
-	scaling_inv_ = cv::Mat::zeros(transform_dim_, transform_dim_, CV_64F);
-	rotation_inv_ = cv::Mat::zeros(transform_dim_, transform_dim_, CV_64F);
-	translate_inv_ = cv::Mat::zeros(transform_dim_, transform_dim_, CV_64F);
-	transform_inv_ = cv::Mat::zeros(transform_dim_, transform_dim_, CV_64F);
-	prev_transform_inv_ = cv::Mat::zeros(transform_dim_, transform_dim_, CV_64F);
-
-	transform_para_ = cv::Mat::zeros(5, 1, CV_64F);
-
-	// set initial inv transformation
-	CalcTransformMatrixInv(feature_, w_x_, w_y_, w_phi_, w_sx_, w_sy_);
+	// transformations
+	transform_inv_ = cv::Mat::eye(transform_dim_, transform_dim_, CV_64F);
+	prev_transform_inv_ = cv::Mat::eye(transform_dim_, transform_dim_, CV_64F);	
+	transform_ = cv::Mat::eye(transform_dim_, transform_dim_, CV_64F);
+	prev_transform_ = cv::Mat::eye(transform_dim_, transform_dim_, CV_64F);	
 
 	std::random_device rd;
 	std::mt19937 engine_uniform_rand(rd());
 	double weight_range = 0.0001;
 	std::uniform_real_distribution<double> uniform_rand(-weight_range, weight_range);
+
+	average_norm_ = 1;
+    ini_norm_ = 1;
+    lambda_ = 0.2;
 	// initialize all the weights
 	for(int p = 0; p < output_dim_; p++)
 	{
 		for(int q = 0; q < input_dim_; q++)
 		{
-			w_x_.at<double>(p, q) = uniform_rand(engine_uniform_rand);
-			w_y_.at<double>(p, q) = uniform_rand(engine_uniform_rand);
-			w_phi_.at<double>(p, q) = uniform_rand(engine_uniform_rand);
-			w_sx_.at<double>(p, q) = uniform_rand(engine_uniform_rand);
-			w_sy_.at<double>(p, q) = uniform_rand(engine_uniform_rand);
+			w_0_0_.at<double>(p, q) = uniform_rand(engine_uniform_rand);
+			w_0_1_.at<double>(p, q) = uniform_rand(engine_uniform_rand);
+			w_0_2_.at<double>(p, q) = uniform_rand(engine_uniform_rand);
+			w_1_0_.at<double>(p, q) = uniform_rand(engine_uniform_rand);
+			w_1_1_.at<double>(p, q) = uniform_rand(engine_uniform_rand);
+			w_1_2_.at<double>(p, q) = uniform_rand(engine_uniform_rand);
 		}
 	}
+	
+	// epsilon_ = 1e-5;
+	epsilon_ = 1e-6;
 
 }
 
-
-// set inverse transformation
-void Transform::set_translate_inv(cv::Mat& feature, cv::Mat& w_x, cv::Mat& w_y)
+void Transform::CalcTransformInv(cv::Mat& feature)
 {
-	cv::Mat tmp;
-	translate_inv_.at<double>(0, 0) = 1.0;
-	translate_inv_.at<double>(1, 1) = 1.0;
-	translate_inv_.at<double>(2, 2) = 1.0;
-	tmp = w_x * feature;
-	translate_inv_.at<double>(0, 2) = -(ini_x_ + tmp.at<double>(0, 0));
-	transform_para_.at<double>(0, 0) = tmp.at<double>(0, 0); // shift x
-	tmp = w_y * feature;
-	translate_inv_.at<double>(1, 2) = -(ini_y_ + tmp.at<double>(0, 0));
-	transform_para_.at<double>(1, 0) = tmp.at<double>(0, 0); // shift y
-}
+	element_0_0_ = w_0_0_.colRange(0, feature.rows) * feature; element_0_1_ = w_0_1_.colRange(0, feature.rows) * feature;	
+	element_0_2_ = w_0_2_.colRange(0, feature.rows) * feature; element_1_0_ = w_1_0_.colRange(0, feature.rows) * feature;	
+	element_1_1_ = w_1_1_.colRange(0, feature.rows) * feature; element_1_2_ = w_1_2_.colRange(0, feature.rows) * feature;	
 
-void Transform::set_rotation_inv(cv::Mat& feature, cv::Mat& w_phi)
-{
-	cv::Mat tmp;
-	tmp = w_phi * feature;
-	transform_para_.at<double>(2, 0) = tmp.at<double>(0, 0); // rotation angle
-	rotation_inv_.at<double>(0, 0) = cos(-(ini_phi_ + tmp.at<double>(0, 0)));
-	rotation_inv_.at<double>(0, 1) = -sin(-(ini_phi_ + tmp.at<double>(0, 0)));
-	rotation_inv_.at<double>(1, 0) = sin(-(ini_phi_ + tmp.at<double>(0, 0)));
-	rotation_inv_.at<double>(1, 1) = cos(-(ini_phi_ + tmp.at<double>(0, 0)));
-	rotation_inv_.at<double>(2, 2) = 1.0;
-}
+	transform_inv_.at<double>(0, 0) = 1.0 + element_0_0_.at<double>(0, 0);	transform_inv_.at<double>(0, 1) = element_0_1_.at<double>(0, 0);	
+	transform_inv_.at<double>(0, 2) = element_0_2_.at<double>(0, 0);		transform_inv_.at<double>(1, 0) = element_1_0_.at<double>(0, 0);	
+	transform_inv_.at<double>(1, 1) = 1.0 + element_1_1_.at<double>(0, 0);	transform_inv_.at<double>(1, 2) = element_1_2_.at<double>(0, 0);	
 
-void Transform::set_scaling_inv(cv::Mat& feature, cv::Mat& w_sx, cv::Mat& w_sy)
-{
-	cv::Mat tmp;
-	tmp = w_sx * feature;
-	scaling_inv_.at<double>(0, 0) = 1 / (ini_sx_ + tmp.at<double>(0, 0)); // delta with respect to 1
-	transform_para_.at<double>(3, 0) = tmp.at<double>(0, 0); // x scaling
-	tmp = w_sy * feature;
-	scaling_inv_.at<double>(1, 1) = 1 / (ini_sy_ + tmp.at<double>(0, 0)); // delta with respect to 1
-	transform_para_.at<double>(4, 0) = tmp.at<double>(0, 0); // y scaling
-	scaling_inv_.at<double>(2, 2) = 1.0;
-}
+	/*transform_.at<double>(0, 0) = 1.0 + element_0_0_.at<double>(0, 0);	transform_.at<double>(0, 1) = element_0_1_.at<double>(0, 0);	
+	transform_.at<double>(0, 2) = element_0_2_.at<double>(0, 0);		transform_.at<double>(1, 0) = element_1_0_.at<double>(0, 0);	
+	transform_.at<double>(1, 1) = 1.0 + element_1_1_.at<double>(0, 0);	transform_.at<double>(1, 2) = element_1_2_.at<double>(0, 0);	*/
+	cv::invert(transform_inv_, transform_);
 
-void Transform::CalcTransformMatrixInv(cv::Mat& feature, cv::Mat& w_x, cv::Mat& w_y, cv::Mat& w_phi, cv::Mat& w_sx, cv::Mat& w_sy)
-{
-	set_translate_inv(feature, w_x, w_y);
-	set_rotation_inv(feature, w_phi);
-	set_scaling_inv(feature, w_sx, w_sy);
-
-	transform_inv_ = scaling_inv_ * rotation_inv_ * translate_inv_; 
-}
-
-cv::Mat Transform::EvaluateInvTransformation(cv::Mat& feature_float)
-{
-	for(int i = 0; i < input_dim_; i++)
-		feature_.at<double>(i, 0) = (double)feature_float.at<double>(i, 0);
-	CalcTransformMatrixInv(feature_, w_x_, w_y_, w_phi_, w_sx_, w_sy_);
-	return transform_para_;
 }
 
 // calculate the transformation
@@ -138,180 +100,396 @@ cv::Mat Transform::TransformDataPointInv(cv::Mat& point, int curr_flag)
 	return transformed_point;
 }
 
-cv::Mat Transform::InterFrameTransformImg(cv::Mat& point)
+cv::Mat Transform::TransformToPreviousFrame(cv::Mat& curr_img_point)
 {
-	cv::Mat transformed_point;
+	cv::Mat prev_predicted_point;
+	cv::Mat prev_transform;
+	cv::invert(prev_transform_inv_, prev_transform);	
+	prev_predicted_point = prev_transform * transform_inv_ * curr_img_point;			
+	return prev_predicted_point;
+}
+
+cv::Mat Transform::TransformToNextFrame(cv::Mat& prev_home_point)
+{
+	cv::Mat predicted_point;
 	cv::Mat transform;
 	cv::invert(transform_inv_, transform);	
-	transformed_point = transform * prev_transform_inv_ * point;			
-	return transformed_point;
+	predicted_point = transform * prev_home_point;			
+	return predicted_point;
+}
+
+//// calculate gradients
+void Transform::CalculateGradient(cv::Mat& original_point, cv::Mat& predicted_point, cv::Mat& target_point, cv::Mat& feature)
+{
+	// points
+	double x_0 = original_point.at<double>(0, 0); double y_0 = original_point.at<double>(1, 0);	
+	double x_h = predicted_point.at<double>(0, 0); double y_h = predicted_point.at<double>(1, 0);	
+	double x_t = target_point.at<double>(0, 0); double y_t = target_point.at<double>(1, 0);	
+	double exp_error = GRADIENT_SCALE * exp(-0.5 * GRADIENT_SCALE * (pow(x_t - x_h, 2) + pow(y_t - y_h, 2)));
+	// gradient expressions... simple...
+	w_0_0_grad_ = exp_error * (x_h - x_t) * x_0 * feature.t();
+	w_0_1_grad_ = exp_error * (x_h - x_t) * y_0 * feature.t();
+	w_0_2_grad_ = exp_error * (x_h - x_t) * 1.0 * feature.t();
+	w_1_0_grad_ = exp_error * (y_h - y_t) * x_0 * feature.t();
+	w_1_1_grad_ = exp_error * (y_h - y_t) * y_0 * feature.t();
+	w_1_2_grad_ = exp_error * (y_h - y_t) * 1.0 * feature.t();
 }
 
 // calculate gradients
-void Transform::CalcWXInvGradient(cv::Mat& transformed_point, cv::Mat& target_point, cv::Mat& feature)
-{
-	// points
-	double x_h = transformed_point.at<double>(0, 0);
-	double y_h = transformed_point.at<double>(1, 0);
-	double x_t = target_point.at<double>(0, 0);
-	double y_t = target_point.at<double>(1, 0);
-	// temporary values
-	cv::Mat tmp_sx = w_sx_ * feature;
-	cv::Mat tmp_sy = w_sy_ * feature;
-	cv::Mat tmp_phi = w_phi_ * feature;
-	double tmp_sx_val = ini_sx_ + tmp_sx.at<double>(0, 0);
-	double tmp_sy_val = ini_sy_ + tmp_sy.at<double>(0, 0);
-	double tmp_phi_val = ini_phi_ + tmp_phi.at<double>(0, 0);
-
-	double exp_error = GRADIENT_SCALE * exp(-0.5 * GRADIENT_SCALE * (pow(x_t - x_h, 2) + pow(y_t - y_h, 2)));
-
-	w_x_grad_ = feature.t() * exp_error * ((x_h - x_t) * (-cos(tmp_phi_val)) / tmp_sx_val + (y_h - y_t) * sin(tmp_phi_val) / tmp_sy_val) ;
-}
-
-void Transform::CalcWYInvGradient(cv::Mat& transformed_point, cv::Mat& target_point, cv::Mat& feature)
-{
-	// points
-	double x_h = transformed_point.at<double>(0, 0);
-	double y_h = transformed_point.at<double>(1, 0);
-	double x_t = target_point.at<double>(0, 0);
-	double y_t = target_point.at<double>(1, 0);
-	// temporary values
-	cv::Mat tmp_sx = w_sx_ * feature;
-	cv::Mat tmp_sy = w_sy_ * feature;
-	cv::Mat tmp_phi = w_phi_ * feature;
-	double tmp_sx_val = ini_sx_ + tmp_sx.at<double>(0, 0);
-	double tmp_sy_val = ini_sy_ + tmp_sy.at<double>(0, 0);
-	double tmp_phi_val = ini_phi_ + tmp_phi.at<double>(0, 0);
-
-	double exp_error = GRADIENT_SCALE * exp(-0.5 * GRADIENT_SCALE * (pow(x_t - x_h, 2) + pow(y_t - y_h, 2)));
-
-	w_y_grad_ = feature.t() * exp_error * ((x_h - x_t) * (-sin(tmp_phi_val)) / tmp_sx_val - (y_h - y_t) * cos(tmp_phi_val) / tmp_sy_val) ;
-	// w_y_grad_ = feature.t() * (y_h - y_t) * exp_error;
-}
-
-void Transform::CalcWPhiInvGradient(cv::Mat& original_point, cv::Mat& transformed_point, cv::Mat& target_point, cv::Mat& feature)
-{
-	double x_0 = original_point.at<double>(0, 0);
-	double y_0 = original_point.at<double>(1, 0);
-	double x_h = transformed_point.at<double>(0, 0);
-	double y_h = transformed_point.at<double>(1, 0);
-	double x_t = target_point.at<double>(0, 0);
-	double y_t = target_point.at<double>(1, 0);
-	double exp_error = GRADIENT_SCALE * exp(-0.5 * GRADIENT_SCALE * (pow(x_t - x_h, 2) + pow(y_t - y_h, 2)));
-
-	cv::Mat tmp_x = w_x_ * feature;
-	cv::Mat tmp_y = w_y_ * feature;
-	cv::Mat tmp_sx = w_sx_ * feature;
-	cv::Mat tmp_sy = w_sy_ * feature;
-	cv::Mat tmp_phi = w_phi_ * feature;
-	double tmp_x_val = ini_x_ + tmp_x.at<double>(0, 0);
-	double tmp_y_val = ini_y_ + tmp_y.at<double>(0, 0);
-	double tmp_sx_val = ini_sx_ + tmp_sx.at<double>(0, 0);
-	double tmp_sy_val = ini_sy_ + tmp_sy.at<double>(0, 0);
-	double tmp_phi_val = ini_phi_ + tmp_phi.at<double>(0, 0);
-
-	// expression of rotation weight gradient... need to check...
-	w_phi_grad_ = exp_error * feature.t() * ((x_h - x_t) * (1 / tmp_sx_val) * (-sin(tmp_phi_val) * x_0 + cos(tmp_phi_val) * y_0 + tmp_x_val * sin(tmp_phi_val) - tmp_y_val * cos(tmp_phi_val)) + 
-		(y_h - y_t) * (1 / tmp_sy_val) * (-cos(tmp_phi_val) * x_0 - sin(tmp_phi_val) * y_0 + tmp_x_val * cos(tmp_phi_val) + tmp_y_val * sin(tmp_phi_val)));
-
-	// w_phi_grad_ = exp_error * ((x_h - x_t) * (x_0 * tmp_sx_val * -sin(tmp_phi_val) * feature.t() - (y_0 * tmp_sy_val * cos(tmp_phi_val)) * feature.t()) + 
-	// 	(y_h - y_t) * (x_0 * tmp_sx_val * cos(tmp_phi_val) * feature.t() - (y_0 * tmp_sy_val * sin(tmp_phi_val)) * feature.t()));
-
-}
-
-void Transform::CalcWSxInvGradient(cv::Mat& original_point, cv::Mat& transformed_point, cv::Mat& target_point, cv::Mat& feature)
-{
-	double x_0 = original_point.at<double>(0, 0);
-	double y_0 = original_point.at<double>(1, 0);
-	double x_h = transformed_point.at<double>(0, 0);
-	double y_h = transformed_point.at<double>(1, 0);
-	double x_t = target_point.at<double>(0, 0);
-	double y_t = target_point.at<double>(1, 0);
-	double exp_error = GRADIENT_SCALE * exp(-0.5 * GRADIENT_SCALE * (pow(x_t - x_h, 2) + pow(y_t - y_h, 2)));
-
-	cv::Mat tmp_phi = w_phi_ * feature;
-	cv::Mat tmp_sx = w_sx_ * feature;
-	double tmp_phi_val = ini_phi_ + tmp_phi.at<double>(0, 0);	
-	double tmp_sx_val = ini_sx_ + tmp_sx.at<double>(0, 0);	
-
-	// expression of sx weight gradient
-	w_sx_grad_ = exp_error * ((x_h - x_t) * (-1 / tmp_sx_val) * x_h) * feature.t();
-
-}
-
-void Transform::CalcWSyInvGradient(cv::Mat& original_point, cv::Mat& transformed_point, cv::Mat& target_point, cv::Mat& feature)
-{
-	double x_0 = original_point.at<double>(0, 0);
-	double y_0 = original_point.at<double>(1, 0);
-	double x_h = transformed_point.at<double>(0, 0);
-	double y_h = transformed_point.at<double>(1, 0);
-	double x_t = target_point.at<double>(0, 0);
-	double y_t = target_point.at<double>(1, 0);
-	double exp_error = GRADIENT_SCALE * exp(-0.5 * GRADIENT_SCALE * (pow(x_t - x_h, 2) + pow(y_t - y_h, 2)));
-
-	cv::Mat tmp_phi = w_phi_ * feature;
-	cv::Mat tmp_sy = w_sy_ * feature;
-	double tmp_phi_val = ini_phi_ + tmp_phi.at<double>(0, 0);		
-	double tmp_sy_val = ini_sy_ + tmp_sy.at<double>(0, 0);	
-
-	// expression of sx weight gradient
-	w_sy_grad_ = exp_error * ((y_h - y_t) * (-1 / tmp_sy_val) * y_h) * feature.t();		
-}
-
-void Transform::CalcInvGradient(cv::Mat& original_point, cv::Mat& transformed_point, cv::Mat& target_point, cv::Mat& feature)
-{
-	CalcWXInvGradient(transformed_point, target_point, feature);
-	CalcWYInvGradient(transformed_point, target_point, feature);
-	CalcWPhiInvGradient(original_point, transformed_point, target_point, feature);
-	CalcWSxInvGradient(original_point, transformed_point, target_point, feature);
-	CalcWSyInvGradient(original_point, transformed_point, target_point, feature);
-}
+//void Transform::CalculateGradient(cv::Mat& original_point, cv::Mat& predicted_point, cv::Mat& target_point, cv::Mat& feature)
+//{
+//	// points
+//	double x_0 = original_point.at<double>(0, 0); double y_0 = original_point.at<double>(1, 0);	
+//	double x_h = predicted_point.at<double>(0, 0); double y_h = predicted_point.at<double>(1, 0);	
+//	double x_t = target_point.at<double>(0, 0); double y_t = target_point.at<double>(1, 0);	
+//	double exp_error = GRADIENT_SCALE * exp(-0.5 * GRADIENT_SCALE * ((x_t - x_h) * (x_t - x_h) + (y_t - y_h) * (y_t - y_h)));
+//	double m_00 = transform_.at<double>(0, 0); double m_01 = transform_.at<double>(0, 1); double m_02 = transform_.at<double>(0, 2);
+//	double m_10 = transform_.at<double>(1, 0); double m_11 = transform_.at<double>(1, 1); double m_12 = transform_.at<double>(1, 2);
+//	double det = m_00 * m_11 - m_01 * m_10;
+//	double a_x = (m_11 * x_0 - m_01 * y_0 + m_01 * m_12 - m_11 * m_02);
+//	double a_y = (-m_10 * x_0 + m_00 * y_0 + m_02 * m_10 - m_00 * m_12);
+//
+//	w_0_0_grad_ = (exp_error / (det * det)) * ((x_h - x_t) * a_x * (-m_11) + (y_h - y_t) * ((y_0 - m_12) * (-m_01 * m_10) - m_11 * (m_02 * m_10 - m_10 * x_0))) * feature.t();
+//	w_0_1_grad_ = (exp_error / (det * det)) * ((x_h - x_t) * ((m_12 - y_0) * (m_00 * m_11) - (-m_10) * (m_11 * x_0 - m_11 * m_02)) + (y_h - y_t) * a_y * m_10) * feature.t();
+//	w_0_2_grad_ = exp_error / det * ((x_h - x_t) * (-m_11) + (y_h - y_t) * m_10) * feature.t();
+//	// gradient expressions... simple...
+//	// w_0_0_grad_ = exp_error * (x_h - x_t) * x_0 * feature.t();
+//	// w_0_1_grad_ = exp_error * (x_h - x_t) * y_0 * feature.t();
+//	// w_0_2_grad_ = exp_error * (x_h - x_t) * 1.0 * feature.t();
+//	w_1_0_grad_ = (exp_error / (det * det)) * ((x_h - x_t) * a_x * m_01 + (y_h - y_t) * ((m_02 - x_0) * (m_00 * m_11) - (-m_01) * (m_00 * y_0 - m_00 * m_12))) * feature.t();
+//	w_1_1_grad_ = (exp_error / (det * det)) * ((x_h - x_t) * ((x_0 - m_02) * (-m_01 * m_10) - m_00 * (m_01 * m_12 - m_01 * y_0)) + (y_h - y_t) * a_y * (-m_00)) * feature.t();
+//	w_1_2_grad_ = exp_error / det * ((x_h - x_t) * m_01 + (y_h - y_t) * (-m_00)) * feature.t();
+//	/*w_1_0_grad_ = exp_error * (y_h - y_t) * x_0 * feature.t();
+//	w_1_1_grad_ = exp_error * (y_h - y_t) * y_0 * feature.t();
+//	w_1_2_grad_ = exp_error * (y_h - y_t) * 1.0 * feature.t();*/
+//
+//	
+//
+//}
 
 void Transform::CalcMiniBatchInvGradient(cv::Mat& original_point, cv::Mat& transformed_point, cv::Mat& target_point, cv::Mat& feature, int batch_count, int batch_idx)
 {
+	int current_dim = feature.rows;
+
 	if(batch_idx == 0)
 	{
-		w_x_grad_batch_ = cv::Mat::zeros(batch_count, input_dim_, CV_64F);
-		w_y_grad_batch_ = cv::Mat::zeros(batch_count, input_dim_, CV_64F);
-		w_phi_grad_batch_ = cv::Mat::zeros(batch_count, input_dim_, CV_64F);
-		w_sx_grad_batch_ = cv::Mat::zeros(batch_count, input_dim_, CV_64F);
-		w_sy_grad_batch_ = cv::Mat::zeros(batch_count, input_dim_, CV_64F);
+		w_0_0_grad_batch_ = cv::Mat::zeros(batch_count, current_dim, CV_64F);
+		w_0_1_grad_batch_ = cv::Mat::zeros(batch_count, current_dim, CV_64F);
+		w_0_2_grad_batch_ = cv::Mat::zeros(batch_count, current_dim, CV_64F);
+		w_1_0_grad_batch_ = cv::Mat::zeros(batch_count, current_dim, CV_64F);
+		w_1_1_grad_batch_ = cv::Mat::zeros(batch_count, current_dim, CV_64F);
+		w_1_2_grad_batch_ = cv::Mat::zeros(batch_count, current_dim, CV_64F);
 	}
-	
-	CalcInvGradient(original_point, transformed_point, target_point, feature);
 
-	w_x_grad_.copyTo(w_x_grad_batch_.rowRange(batch_idx, batch_idx + 1));
-	w_y_grad_.copyTo(w_y_grad_batch_.rowRange(batch_idx, batch_idx + 1));
-	w_phi_grad_.copyTo(w_phi_grad_batch_.rowRange(batch_idx, batch_idx + 1));
-	w_sx_grad_.copyTo(w_sx_grad_batch_.rowRange(batch_idx, batch_idx + 1));
-	w_sy_grad_.copyTo(w_sy_grad_batch_.rowRange(batch_idx, batch_idx + 1));	
+	CalculateGradient(original_point, transformed_point, target_point, feature);
+	w_0_0_grad_.copyTo(w_0_0_grad_batch_.rowRange(batch_idx, batch_idx + 1));
+	w_0_1_grad_.copyTo(w_0_1_grad_batch_.rowRange(batch_idx, batch_idx + 1));
+	w_0_2_grad_.copyTo(w_0_2_grad_batch_.rowRange(batch_idx, batch_idx + 1));
+	w_1_0_grad_.copyTo(w_1_0_grad_batch_.rowRange(batch_idx, batch_idx + 1));
+	w_1_1_grad_.copyTo(w_1_1_grad_batch_.rowRange(batch_idx, batch_idx + 1));	
+	w_1_2_grad_.copyTo(w_1_2_grad_batch_.rowRange(batch_idx, batch_idx + 1));	
 }
 
-void Transform::UpdateWeightBatch()
+// reshape the gradients in a certain way to facilitate fisher information estimation
+cv::Mat Transform::AggregateGradients(int current_dim)
 {
-	cv::reduce(w_x_grad_batch_, w_x_grad_, 0, CV_REDUCE_AVG);
-	cv::reduce(w_y_grad_batch_, w_y_grad_, 0, CV_REDUCE_AVG);
-	cv::reduce(w_phi_grad_batch_, w_phi_grad_, 0, CV_REDUCE_AVG);
-	cv::reduce(w_sx_grad_batch_, w_sx_grad_, 0, CV_REDUCE_AVG);
-	cv::reduce(w_sy_grad_batch_, w_sy_grad_, 0, CV_REDUCE_AVG);
+	cv::Mat tmp;
+	cv::Mat w_grad_tmp = cv::Mat::zeros(current_dim * 6, output_dim_, CV_64F);
+	tmp = w_0_0_grad_.t();
+	for(int i = 0; i < current_dim; i++)
+		tmp.rowRange(i, i + 1).copyTo(w_grad_tmp.rowRange(i * 6 + 0, i * 6 + 0 + 1));
+	tmp = w_0_1_grad_.t();
+	for(int i = 0; i < current_dim; i++)
+		tmp.rowRange(i, i + 1).copyTo(w_grad_tmp.rowRange(i * 6 + 1, i * 6 + 1 + 1));
+	tmp = w_0_2_grad_.t();
+	for(int i = 0; i < current_dim; i++)
+		tmp.rowRange(i, i + 1).copyTo(w_grad_tmp.rowRange(i * 6 + 2, i * 6 + 2 + 1));
+	tmp = w_1_0_grad_.t();
+	for(int i = 0; i < current_dim; i++)
+		tmp.rowRange(i, i + 1).copyTo(w_grad_tmp.rowRange(i * 6 + 3, i * 6 + 3 + 1));
+	tmp = w_1_1_grad_.t();
+	for(int i = 0; i < current_dim; i++)
+		tmp.rowRange(i, i + 1).copyTo(w_grad_tmp.rowRange(i * 6 + 4, i * 6 + 4 + 1));
+	tmp = w_1_2_grad_.t();
+	for(int i = 0; i < current_dim; i++)
+		tmp.rowRange(i, i + 1).copyTo(w_grad_tmp.rowRange(i * 6 + 5, i * 6 + 5 + 1));
 
-	w_x_ = w_x_ - w_x_rate_ * w_x_grad_;
-	w_y_ = w_y_ - w_y_rate_ * w_y_grad_;
-	w_phi_ = w_phi_ - w_angle_rate_ * w_phi_grad_;
-	w_sx_ = w_sx_ - w_sx_rate_ * w_sx_grad_;
-	w_sy_ = w_sy_ - w_sy_rate_ * w_sy_grad_;
+	return w_grad_tmp;
+}
 
-	/*w_x_ = w_x_ - 0.32 * w_x_grad_;
-	w_y_ = w_y_ - 0.32 * w_y_grad_;
-	w_phi_ = w_phi_ - 4e-5 * w_phi_grad_;
-	w_sx_ = w_sx_ - 0.12 * w_sx_grad_;
-	w_sy_ = w_sy_ - 0.03 * w_sy_grad_;*/
+void Transform::UpdateWeightBatch(int iter, int current_dim)
+{
+	cv::reduce(w_0_0_grad_batch_, w_0_0_grad_, 0, CV_REDUCE_AVG);
+	cv::reduce(w_0_1_grad_batch_, w_0_1_grad_, 0, CV_REDUCE_AVG);
+	cv::reduce(w_0_2_grad_batch_, w_0_2_grad_, 0, CV_REDUCE_AVG);
+	cv::reduce(w_1_0_grad_batch_, w_1_0_grad_, 0, CV_REDUCE_AVG);
+	cv::reduce(w_1_1_grad_batch_, w_1_1_grad_, 0, CV_REDUCE_AVG);
+	cv::reduce(w_1_2_grad_batch_, w_1_2_grad_, 0, CV_REDUCE_AVG);
+
+	/************** normal gradient ********************/
+
+	w_0_0_.colRange(0, current_dim) = w_0_0_.colRange(0, current_dim) - w_0_0_rate_ * w_0_0_grad_;
+	w_0_1_.colRange(0, current_dim) = w_0_1_.colRange(0, current_dim) - w_0_1_rate_ * w_0_1_grad_;
+	w_0_2_.colRange(0, current_dim) = w_0_2_.colRange(0, current_dim) - w_0_2_rate_ * w_0_2_grad_;
+	w_1_0_.colRange(0, current_dim) = w_1_0_.colRange(0, current_dim) - w_1_0_rate_ * w_1_0_grad_;
+	w_1_1_.colRange(0, current_dim) = w_1_1_.colRange(0, current_dim) - w_1_1_rate_ * w_1_1_grad_;
+	w_1_2_.colRange(0, current_dim) = w_1_2_.colRange(0, current_dim) - w_1_2_rate_ * w_1_2_grad_;
+
+	/************** natural gradient ******************/
+
+	//cv::Mat curr_grad = AggregateGradients(current_dim);
+	//cv::Mat curr_fisher = cv::Mat::zeros(current_dim * 6, current_dim * 6, CV_64F);
+	//fisher_inv_(cv::Rect(0, 0, current_dim * 6, current_dim * 6)).copyTo(curr_fisher);
+	//cv::Mat tmpv = curr_grad.t() * curr_fisher * curr_grad;
+	//double tmp_value = tmpv.at<double>(0, 0);
+	////
+	//curr_fisher = (1 / (1 - epsilon_)) * (curr_fisher - epsilon_ / (1- epsilon_ + epsilon_ * tmp_value) * curr_fisher * (curr_grad * curr_grad.t()) * curr_fisher);
+	//cv::Mat curr_natural_grad = curr_fisher * curr_grad;
+	//curr_fisher.copyTo(fisher_inv_(cv::Rect(0, 0, current_dim * 6, current_dim * 6)));
+	//double curr_norm = cv::norm(curr_natural_grad, cv::NORM_L2);
+	//if(iter == 1)
+	//{
+	//	ini_norm_ = curr_norm;
+	//	average_norm_ = curr_norm;       
+	//}
+	//else    
+	//	average_norm_ = (1 - lambda_) * average_norm_ + lambda_ * curr_norm; 
+
+
+	//cv::Mat tmp = cv::Mat::zeros(current_dim, output_dim_, CV_64F);
+	//for(int i = 0; i < current_dim; i++)
+	//	curr_natural_grad.rowRange(i * 6 + 0, i * 6 + 0 + 1).copyTo(tmp.rowRange(i, i + 1));
+	//w_0_0_.colRange(0, current_dim) = w_0_0_.colRange(0, current_dim) - (w_0_0_rate_ * ini_norm_ / average_norm_) * tmp;
+
+	//tmp = cv::Mat::zeros(current_dim, output_dim_, CV_64F);
+	//for(int i = 0; i < current_dim; i++)
+	//	curr_natural_grad.rowRange(i * 6 + 1, i * 6 + 1 + 1).copyTo(tmp.rowRange(i, i + 1));
+	//w_0_1_.colRange(0, current_dim) = w_0_1_.colRange(0, current_dim) - (w_0_1_rate_ * ini_norm_ / average_norm_) * tmp;
+
+	//tmp = cv::Mat::zeros(current_dim, output_dim_, CV_64F);
+	//for(int i = 0; i < current_dim; i++)
+	//	curr_natural_grad.rowRange(i * 6 + 2, i * 6 + 2 + 1).copyTo(tmp.rowRange(i, i + 1));
+	//w_0_2_.colRange(0, current_dim) = w_0_2_.colRange(0, current_dim) - (w_0_2_rate_ * ini_norm_ / average_norm_) * tmp;
+
+	//tmp = cv::Mat::zeros(current_dim, output_dim_, CV_64F);
+	//for(int i = 0; i < current_dim; i++)
+	//	curr_natural_grad.rowRange(i * 6 + 3, i * 6 + 3 + 1).copyTo(tmp.rowRange(i, i + 1));
+	//w_1_0_.colRange(0, current_dim) = w_1_0_.colRange(0, current_dim) - (w_1_0_rate_ * ini_norm_ / average_norm_) * tmp;
+
+	//tmp = cv::Mat::zeros(current_dim, output_dim_, CV_64F);
+	//for(int i = 0; i < current_dim; i++)
+	//	curr_natural_grad.rowRange(i * 6 + 4, i * 6 + 4 + 1).copyTo(tmp.rowRange(i, i + 1));
+	//w_1_1_.colRange(0, current_dim) = w_1_1_.colRange(0, current_dim) - (w_1_1_rate_ * ini_norm_ / average_norm_) * tmp;
+	//
+	//tmp = cv::Mat::zeros(current_dim, output_dim_, CV_64F);
+	//for(int i = 0; i < current_dim; i++)
+	//	curr_natural_grad.rowRange(i * 6 + 5, i * 6 + 5 + 1).copyTo(tmp.rowRange(i, i + 1));
+	//w_1_2_.colRange(0, current_dim) = w_1_2_.colRange(0, current_dim) - (w_1_2_rate_ * ini_norm_ / average_norm_) * tmp;
+
+
+
+
+	//w_0_0_.colRange(0, current_dim) = w_0_0_.colRange(0, current_dim) - (w_0_0_rate_ * ini_norm_ / average_norm_) * curr_natural_grad.rowRange(0, current_dim).t();
+	//w_0_1_.colRange(0, current_dim) = w_0_1_.colRange(0, current_dim) - (w_0_1_rate_ * ini_norm_ / average_norm_) * curr_natural_grad.rowRange(current_dim, 2 * current_dim).t();
+	//w_0_2_.colRange(0, current_dim) = w_0_2_.colRange(0, current_dim) - (w_0_2_rate_ * ini_norm_ / average_norm_) * curr_natural_grad.rowRange(2 * current_dim, 3 * current_dim).t();
+	//w_1_0_.colRange(0, current_dim) = w_1_0_.colRange(0, current_dim) - (w_1_0_rate_ * ini_norm_ / average_norm_) * curr_natural_grad.rowRange(3 * current_dim, 4 * current_dim).t();
+	//w_1_1_.colRange(0, current_dim) = w_1_1_.colRange(0, current_dim) - (w_1_1_rate_ * ini_norm_ / average_norm_) * curr_natural_grad.rowRange(4 * current_dim, 5 * current_dim).t();
+	//w_1_2_.colRange(0, current_dim) = w_1_2_.colRange(0, current_dim) - (w_1_2_rate_ * ini_norm_ / average_norm_) * curr_natural_grad.rowRange(5 * current_dim, 6 * current_dim).t();
+
+	/**************************************/
+
+	//tmp_ = w_0_0_grad_.t();
+	//tmp_.copyTo(w_grad_.rowRange(0, input_dim_));
+	//tmp_ = w_0_1_grad_.t();
+	//tmp_.copyTo(w_grad_.rowRange(input_dim_, 2 * input_dim_));
+	//tmp_ = w_0_2_grad_.t();
+	//tmp_.copyTo(w_grad_.rowRange(2 * input_dim_, 3 * input_dim_));
+	//tmp_ = w_1_0_grad_.t();
+	//tmp_.copyTo(w_grad_.rowRange(3 * input_dim_, 4 * input_dim_));
+	//tmp_ = w_1_1_grad_.t();
+	//tmp_.copyTo(w_grad_.rowRange(4 * input_dim_, 5 * input_dim_));
+	//tmp_ = w_1_2_grad_.t();
+	//tmp_.copyTo(w_grad_.rowRange(5 * input_dim_, 6 * input_dim_));
+
+	//// double epsilon = 1e-6; // 6e-7;
+	//tmp_ = w_grad_.t() * fisher_inv_ * w_grad_;
+	//double tmp_value = tmp_.at<double>(0, 0);
+	//
+	//fisher_inv_ = (1 / (1 - epsilon_)) * (fisher_inv_ - epsilon_ / (1- epsilon_ + epsilon_ * tmp_value) * fisher_inv_ * (w_grad_ * w_grad_.t()) * fisher_inv_);
+	//natural_grad_ = fisher_inv_ * w_grad_;
+
+	//// tmp_grad_ = w_grad_;
+
+	//w_0_0_ = w_0_0_ - w_0_0_rate_ * natural_grad_.rowRange(0, input_dim_).t();
+	//w_0_1_ = w_0_1_ - w_0_1_rate_ * natural_grad_.rowRange(input_dim_, 2 * input_dim_).t();
+	//w_0_2_ = w_0_2_ - w_0_2_rate_ * natural_grad_.rowRange(2 * input_dim_, 3 * input_dim_).t();
+	//w_1_0_ = w_1_0_ - w_1_0_rate_ * natural_grad_.rowRange(3 * input_dim_, 4 * input_dim_).t();
+	//w_1_1_ = w_1_1_ - w_1_1_rate_ * natural_grad_.rowRange(4 * input_dim_, 5 * input_dim_).t();
+	//w_1_2_ = w_1_2_ - w_1_2_rate_ * natural_grad_.rowRange(5 * input_dim_, 6 * input_dim_).t();
+
+	/*******************************************/
+
+	//cv::Mat tmp;
+	//cv::Mat w_grad_tmp = cv::Mat::zeros(current_dim * 6, output_dim_, CV_64F);
+	//tmp = w_0_0_grad_.t();
+	//tmp.copyTo(w_grad_tmp.rowRange(0, current_dim));
+	//tmp = w_0_1_grad_.t();
+	//tmp.copyTo(w_grad_tmp.rowRange(current_dim, 2 * current_dim));
+	//tmp = w_0_2_grad_.t();
+	//tmp.copyTo(w_grad_tmp.rowRange(2 * current_dim, 3 * current_dim));
+	//tmp = w_1_0_grad_.t();
+	//tmp.copyTo(w_grad_tmp.rowRange(3 * current_dim, 4 * current_dim));
+	//tmp = w_1_1_grad_.t();
+	//tmp.copyTo(w_grad_tmp.rowRange(4 * current_dim, 5 * current_dim));
+	//tmp = w_1_2_grad_.t();
+	//tmp.copyTo(w_grad_tmp.rowRange(5 * current_dim, 6 * current_dim));
+
+	//if(current_dim !=  prev_dim_)
+	//{
+	//	// reset...
+	//	fisher_inv_ = cv::Mat::eye(6 * current_dim, 6 * current_dim, CV_64F);
+	//	prev_dim_ = current_dim;
+	//}
+	//// tmp_ = w_grad_.t() * fisher_inv_ * w_grad_;
+	//tmp = w_grad_tmp.t() * fisher_inv_ * w_grad_tmp;
+	//// double tmp_value = tmp_.at<double>(0, 0);	
+	//double tmp_value = tmp.at<double>(0, 0);
+	//std::cout << tmp_value << std::endl;
+	//fisher_inv_ = (1 / (1 - epsilon_)) * (fisher_inv_ - epsilon_ / (1- epsilon_ + epsilon_ * tmp_value) * fisher_inv_ * (w_grad_tmp * w_grad_tmp.t()) * fisher_inv_);
+	//// curr_fisher_inv = (1 / (1 - epsilon_)) * (curr_fisher_inv - epsilon_ / (1- epsilon_ + epsilon_ * tmp_value) * curr_fisher_inv * (w_grad_tmp * w_grad_tmp.t()) * curr_fisher_inv);
+	//cv::Mat curr_natural_grad = fisher_inv_ * w_grad_tmp;
+	//double curr_norm = cv::norm(curr_natural_grad, cv::NORM_L2);
+ //   if(iter == 1)
+ //   {
+ //       ini_norm_ = curr_norm;
+ //       average_norm_ = curr_norm;       
+ //   }
+ //   else    
+ //       average_norm_ = (1 - lambda_) * average_norm_ + lambda_ * curr_norm; 
+
+	//w_0_0_.colRange(0, current_dim) = w_0_0_.colRange(0, current_dim) - (w_0_0_rate_ * ini_norm_ / average_norm_) * curr_natural_grad.rowRange(0, current_dim).t();
+	//w_0_1_.colRange(0, current_dim) = w_0_1_.colRange(0, current_dim) - (w_0_1_rate_ * ini_norm_ / average_norm_) * curr_natural_grad.rowRange(current_dim, 2 * current_dim).t();
+	//w_0_2_.colRange(0, current_dim) = w_0_2_.colRange(0, current_dim) - (w_0_2_rate_ * ini_norm_ / average_norm_) * curr_natural_grad.rowRange(2 * current_dim, 3 * current_dim).t();
+	//w_1_0_.colRange(0, current_dim) = w_1_0_.colRange(0, current_dim) - (w_1_0_rate_ * ini_norm_ / average_norm_) * curr_natural_grad.rowRange(3 * current_dim, 4 * current_dim).t();
+	//w_1_1_.colRange(0, current_dim) = w_1_1_.colRange(0, current_dim) - (w_1_1_rate_ * ini_norm_ / average_norm_) * curr_natural_grad.rowRange(4 * current_dim, 5 * current_dim).t();
+	//w_1_2_.colRange(0, current_dim) = w_1_2_.colRange(0, current_dim) - (w_1_2_rate_ * ini_norm_ / average_norm_) * curr_natural_grad.rowRange(5 * current_dim, 6 * current_dim).t();
+
+	//w_0_0_ = w_0_0_ - w_0_0_rate_ * w_0_0_grad_;
+	//w_0_1_ = w_0_1_ - w_0_1_rate_ * w_0_1_grad_;
+	//w_0_2_ = w_0_2_ - w_0_2_rate_ * w_0_2_grad_;
+	//w_1_0_ = w_1_0_ - w_1_0_rate_ * w_1_0_grad_;
+	//w_1_1_ = w_1_1_ - w_1_1_rate_ * w_1_1_grad_;
+	//w_1_2_ = w_1_2_ - w_1_2_rate_ * w_1_2_grad_;
+
+	/*w_0_0_.colRange(0, current_dim) = w_0_0_.colRange(0, current_dim) - w_0_0_rate_ * w_0_0_grad_;
+	w_0_1_.colRange(0, current_dim) = w_0_1_.colRange(0, current_dim) - w_0_1_rate_ * w_0_1_grad_;
+	w_0_2_.colRange(0, current_dim) = w_0_2_.colRange(0, current_dim) - w_0_2_rate_ * w_0_2_grad_;
+	w_1_0_.colRange(0, current_dim) = w_1_0_.colRange(0, current_dim) - w_1_0_rate_ * w_1_0_grad_;
+	w_1_1_.colRange(0, current_dim) = w_1_1_.colRange(0, current_dim) - w_1_1_rate_ * w_1_1_grad_;
+	w_1_2_.colRange(0, current_dim) = w_1_2_.colRange(0, current_dim) - w_1_2_rate_ * w_1_2_grad_;*/
+
+	// std::cout << cv::norm(w_0_0_grad_) << " " << cv::norm(w_0_1_grad_) << " " << cv::norm(w_0_2_grad_) << " " << cv::norm(w_1_0_grad_) << " " << cv::norm(w_1_1_grad_) << " " << cv::norm(w_1_2_grad_) << std::endl;
+	
+	/*tmp_ = w_0_0_grad_.t();
+	tmp_.copyTo(w_grad_.rowRange(0, input_dim_));
+	tmp_ = w_0_1_grad_.t();
+	tmp_.copyTo(w_grad_.rowRange(input_dim_, 2 * input_dim_));
+	tmp_ = w_0_2_grad_.t();
+	tmp_.copyTo(w_grad_.rowRange(2 * input_dim_, 3 * input_dim_));
+	tmp_ = w_1_0_grad_.t();
+	tmp_.copyTo(w_grad_.rowRange(3 * input_dim_, 4 * input_dim_));
+	tmp_ = w_1_1_grad_.t();
+	tmp_.copyTo(w_grad_.rowRange(4 * input_dim_, 5 * input_dim_));
+	tmp_ = w_1_2_grad_.t();
+	tmp_.copyTo(w_grad_.rowRange(5 * input_dim_, 6 * input_dim_));*/
+
+	/*cv::Mat tmp;
+	cv::Mat w_grad_tmp = cv::Mat::zeros(current_dim * 6, output_dim_, CV_64F);
+	tmp = w_0_0_grad_.t();
+	for(int i = 0; i < current_dim; i++)
+		tmp.rowRange(i, i + 1).copyTo(w_grad_tmp.rowRange(i * 6 + 0, i * 6 + 0 + 1));
+	tmp = w_0_1_grad_.t();
+	for(int i = 0; i < current_dim; i++)
+		tmp.rowRange(i, i + 1).copyTo(w_grad_tmp.rowRange(i * 6 + 1, i * 6 + 1 + 1));
+	tmp = w_0_2_grad_.t();
+	for(int i = 0; i < current_dim; i++)
+		tmp.rowRange(i, i + 1).copyTo(w_grad_tmp.rowRange(i * 6 + 2, i * 6 + 2 + 1));
+	tmp = w_1_0_grad_.t();
+	for(int i = 0; i < current_dim; i++)
+		tmp.rowRange(i, i + 1).copyTo(w_grad_tmp.rowRange(i * 6 + 3, i * 6 + 3 + 1));
+	tmp = w_1_1_grad_.t();
+	for(int i = 0; i < current_dim; i++)
+		tmp.rowRange(i, i + 1).copyTo(w_grad_tmp.rowRange(i * 6 + 4, i * 6 + 4 + 1));
+	tmp = w_1_2_grad_.t();
+	for(int i = 0; i < current_dim; i++)
+		tmp.rowRange(i, i + 1).copyTo(w_grad_tmp.rowRange(i * 6 + 5, i * 6 + 5 + 1));
+	*/
+
+
+	// w_rate_ 
+
+	/*tmp = cv::Mat(current_dim, output_dim_, CV_64F);
+	for(int i = 0; i < current_dim; i++)
+		curr_natural_grad.rowRange(i * 6 + 0, i * 6 + 0 + 1).copyTo(tmp.rowRange(i, i + 1));
+	w_0_0_.colRange(0, current_dim) = w_0_0_.colRange(0, current_dim) - (w_0_0_rate_ * ini_norm_ / average_norm_) * tmp;
+
+	tmp = cv::Mat(current_dim, output_dim_, CV_64F);
+	for(int i = 0; i < current_dim; i++)
+		curr_natural_grad.rowRange(i * 6 + 1, i * 6 + 1 + 1).copyTo(tmp.rowRange(i, i + 1));
+	w_0_1_.colRange(0, current_dim) = w_0_1_.colRange(0, current_dim) - (w_0_1_rate_ * ini_norm_ / average_norm_) * tmp;
+
+	tmp = cv::Mat(current_dim, output_dim_, CV_64F);
+	for(int i = 0; i < current_dim; i++)
+		curr_natural_grad.rowRange(i * 6 + 2, i * 6 + 2 + 1).copyTo(tmp.rowRange(i, i + 1));
+	w_0_2_.colRange(0, current_dim) = w_0_2_.colRange(0, current_dim) - (w_0_2_rate_ * ini_norm_ / average_norm_) * tmp;
+
+	tmp = cv::Mat(current_dim, output_dim_, CV_64F);
+	for(int i = 0; i < current_dim; i++)
+		curr_natural_grad.rowRange(i * 6 + 3, i * 6 + 3 + 1).copyTo(tmp.rowRange(i, i + 1));
+	w_1_0_.colRange(0, current_dim) = w_1_0_.colRange(0, current_dim) - (w_1_0_rate_ * ini_norm_ / average_norm_) * tmp;
+
+	tmp = cv::Mat(current_dim, output_dim_, CV_64F);
+	for(int i = 0; i < current_dim; i++)
+		curr_natural_grad.rowRange(i * 6 + 4, i * 6 + 4 + 1).copyTo(tmp.rowRange(i, i + 1));
+	w_1_1_.colRange(0, current_dim) = w_1_1_.colRange(0, current_dim) - (w_1_1_rate_ * ini_norm_ / average_norm_) * tmp;
+	
+	tmp = cv::Mat(current_dim, output_dim_, CV_64F);
+	for(int i = 0; i < current_dim; i++)
+		curr_natural_grad.rowRange(i * 6 + 5, i * 6 + 5 + 1).copyTo(tmp.rowRange(i, i + 1));
+	w_1_2_.colRange(0, current_dim) = w_1_2_.colRange(0, current_dim) - (w_1_2_rate_ * ini_norm_ / average_norm_) * tmp;
+
+	curr_fisher_inv.copyTo(fisher_inv_(cv::Rect(0, 0, current_dim * 6, current_dim * 6)));*/
+	//w_0_0_.colRange(0, current_dim) = w_0_0_.colRange(0, current_dim) - (w_0_0_rate_ * ini_norm_ / average_norm_) * curr_natural_grad.rowRange(0, current_dim).t();
+	//w_0_1_.colRange(0, current_dim) = w_0_1_.colRange(0, current_dim) - (w_0_1_rate_ * ini_norm_ / average_norm_) * curr_natural_grad.rowRange(current_dim, 2 * current_dim).t();
+	//w_0_2_.colRange(0, current_dim) = w_0_2_.colRange(0, current_dim) - (w_0_2_rate_ * ini_norm_ / average_norm_) * curr_natural_grad.rowRange(2 * current_dim, 3 * current_dim).t();
+	//w_1_0_.colRange(0, current_dim) = w_1_0_.colRange(0, current_dim) - (w_1_0_rate_ * ini_norm_ / average_norm_) * curr_natural_grad.rowRange(3 * current_dim, 4 * current_dim).t();
+	//w_1_1_.colRange(0, current_dim) = w_1_1_.colRange(0, current_dim) - (w_1_1_rate_ * ini_norm_ / average_norm_) * curr_natural_grad.rowRange(4 * current_dim, 5 * current_dim).t();
+	//w_1_2_.colRange(0, current_dim) = w_1_2_.colRange(0, current_dim) - (w_1_2_rate_ * ini_norm_ / average_norm_) * curr_natural_grad.rowRange(5 * current_dim, 6 * current_dim).t();
+	
+	// tmp_grad_ = w_grad_;
+	// double epsilon = 1e-6; // 6e-7;
+}
+
+cv::Mat Transform::fisher_inv()
+{
+	return fisher_inv_;
+}
+
+cv::Mat Transform::w_grad()
+{
+	return w_grad_;
+}
+
+cv::Mat Transform::natural_grad()
+{
+	return natural_grad_;
 }
 
 // copy to previous transformation
 void Transform::CopyToPrev()
 {
 	transform_inv_.copyTo(prev_transform_inv_);
+	//transform_.copyTo(prev_transform_);
 }
 
 void Transform::CheckInvGradient()
@@ -324,7 +502,7 @@ void Transform::CheckInvGradient()
 	
 	// allocate data points
 	cv::Mat original_point = cv::Mat::zeros(transform_dim_, 1, CV_64F);
-	cv::Mat transformed_point = cv::Mat::zeros(transform_dim_, 1, CV_64F);
+	cv::Mat predicted_point = cv::Mat::zeros(transform_dim_, 1, CV_64F);
 	cv::Mat target_point = cv::Mat::zeros(transform_dim_, 1, CV_64F);
 	// numerical gradient
 	cv::Mat transformed_point_delta_1 = cv::Mat::zeros(transform_dim_, 1, CV_64F);
@@ -333,39 +511,46 @@ void Transform::CheckInvGradient()
 	cv::Mat tmp_w;
 	double e_1 = 0;
 	double e_2 = 0;
-	double disturb_value = 0.001;
+	double disturb_value = 0.000001;
 	double numerical_gradient = 0;
 	double analytical_gradient = 0;
 	
-	target_point.at<double>(0, 0) = -0.3709615735; target_point.at<double>(1, 0) = -0.7597566886; target_point.at<double>(2, 0) = 1.0;	
-	original_point.at<double>(0, 0) = 213.607177734375; original_point.at<double>(1, 0) = 210.383468628; original_point.at<double>(2, 0) = 1.0;
+	target_point.at<double>(0, 0) = -0.0044846991077065468; target_point.at<double>(1, 0) = -0.36011973023414612; target_point.at<double>(2, 0) = 1.0;	
+	original_point.at<double>(0, 0) = -0.0020943940617144108; original_point.at<double>(1, 0) = -0.36954641342163086; original_point.at<double>(2, 0) = 1.0;
 	// calculate the current feature vector
-	CalcTransformMatrixInv(feature, w_x_, w_y_, w_phi_, w_sx_, w_sy_);
+	CalcTransformInv(feature);	
 	// calculate the transformed point
-	transformed_point = TransformDataPointInv(original_point, 1);
+	predicted_point = TransformDataPointInv(original_point, 1);
 	// calculate analytical gradient
-	CalcInvGradient(original_point, transformed_point, target_point, feature);
+	CalculateGradient(original_point, predicted_point, target_point, feature);
 	// currently checking gradient for phi...
 	for(int i = 0; i < input_dim_; i++)
 	{
 		disturb = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
 		disturb.at<double>(0, i) = disturb_value;
-		tmp_w = w_phi_ + disturb;
-		CalcTransformMatrixInv(feature, w_x_, w_y_, tmp_w, w_sx_, w_sy_);
+		w_0_2_ = w_0_2_ + disturb;
+		CalcTransformInv(feature);
 		transformed_point_delta_1 = TransformDataPointInv(original_point, 1);
-		tmp_w = w_phi_ - disturb;
-		CalcTransformMatrixInv(feature, w_x_, w_y_, tmp_w, w_sx_, w_sy_);
+		w_0_2_ = w_0_2_ - 2 * disturb;
+		CalcTransformInv(feature);
 		transformed_point_delta_2 = TransformDataPointInv(original_point, 1);
 		// reset back...
-		CalcTransformMatrixInv(feature, w_x_, w_y_, w_phi_, w_sx_, w_sy_);
-		transformed_point = TransformDataPointInv(original_point, 1);
+		w_0_2_ = w_0_2_ + disturb;
+		CalcTransformInv(feature);
+		predicted_point = TransformDataPointInv(original_point, 1);
 		// calculate error
-		e_1 = 1 - exp(-0.5 * GRADIENT_SCALE * (pow(target_point.at<double>(0, 0) - transformed_point_delta_1.at<double>(0, 0), 2) +
-			pow(target_point.at<double>(1, 0) - transformed_point_delta_1.at<double>(1, 0), 2)));
-		e_2 = 1 - exp(-0.5 * GRADIENT_SCALE * (pow(target_point.at<double>(0, 0) - transformed_point_delta_2.at<double>(0, 0), 2) +
-			pow(target_point.at<double>(1, 0) - transformed_point_delta_2.at<double>(1, 0), 2)));
+		double tx = target_point.at<double>(0, 0);
+		double ty = target_point.at<double>(1, 0);
+		double px1 = transformed_point_delta_1.at<double>(0, 0);
+		double py1 = transformed_point_delta_1.at<double>(1, 0);
+		double px2 = transformed_point_delta_2.at<double>(0, 0);
+		double py2 = transformed_point_delta_2.at<double>(1, 0);
+
+		e_1 = 1 - exp(-0.5 * GRADIENT_SCALE * ((tx - px1) * (tx - px1) + (ty - py1) * (ty - py1)));		
+		e_2 = 1 - exp(-0.5 * GRADIENT_SCALE * ((tx - px2) * (tx - px2) + (ty - py2) * (ty - py2)));
+
 		numerical_gradient = (e_1 - e_2) / (2 * disturb_value);
-		analytical_gradient = w_phi_grad_.at<double>(0, i);
+		analytical_gradient = w_0_2_grad_.at<double>(0, i);
 
 		std::cout << "iteration: " << i << std::endl;
 		std::cout << "analytical gradient: " << analytical_gradient << " " << "numerical gradient: " << numerical_gradient << std::endl;
@@ -373,29 +558,34 @@ void Transform::CheckInvGradient()
 	
 }
 
-cv::Mat Transform::w_x()
+cv::Mat Transform::w_0_0()
 {
-	return w_x_;
+	return w_0_0_;
 }
 
-cv::Mat Transform::w_y()
+cv::Mat Transform::w_0_1()
 {
-	return w_y_;
+	return w_0_1_;
 }
 
-cv::Mat Transform::w_phi()
+cv::Mat Transform::w_0_2()
 {
-	return w_phi_;
+	return w_0_2_;
 }
 
-cv::Mat Transform::w_sx()
+cv::Mat Transform::w_1_0()
 {
-	return w_sx_;
+	return w_1_0_;
 }
 
-cv::Mat Transform::w_sy()
+cv::Mat Transform::w_1_1()
 {
-	return w_sy_;
+	return w_1_1_;
+}
+
+cv::Mat Transform::w_1_2()
+{
+	return w_1_2_;
 }
 
 cv::Mat Transform::transform_inv()
@@ -408,36 +598,45 @@ cv::Mat Transform::prev_transform_inv()
 	return prev_transform_inv_;
 }
 
-void Transform::set_w_x(cv::Mat& w)
+void Transform::set_w_0_0(cv::Mat& w)
 {
-	 w.copyTo(w_x_);
+	 w.copyTo(w_0_0_);
 }
 
-void Transform::set_w_y(cv::Mat& w)
+void Transform::set_w_0_1(cv::Mat& w)
 {
-	w.copyTo(w_y_);
+	w.copyTo(w_0_1_);
 }
 
-void Transform::set_w_phi(cv::Mat& w)
+void Transform::set_w_0_2(cv::Mat& w)
 {
-	w.copyTo(w_phi_);
+	w.copyTo(w_0_2_);
 }
 
-void Transform::set_w_sx(cv::Mat& w)
+void Transform::set_w_1_0(cv::Mat& w)
 {
-	w.copyTo(w_sx_);
+	w.copyTo(w_1_0_);
 }
 
-void Transform::set_w_sy(cv::Mat& w)
+void Transform::set_w_1_1(cv::Mat& w)
 {
-	w.copyTo(w_sy_);
+	w.copyTo(w_1_1_);
 }
 
-void Transform::SetLearningRates(double x_rate, double y_rate, double angle_rate, double sx_rate, double sy_rate)
+void Transform::set_w_1_2(cv::Mat& w)
 {
-	w_x_rate_ = x_rate;
-	w_y_rate_ = y_rate;
-	w_angle_rate_ = angle_rate;
-	w_sx_rate_ = sx_rate;
-	w_sy_rate_ = sy_rate;
+	w.copyTo(w_1_2_);
+}
+
+void Transform::SetLearningRates(double normal_rate, double natural_rate)
+{
+	w_0_0_rate_ = normal_rate;
+	w_0_1_rate_ = normal_rate;
+	w_0_2_rate_ = normal_rate;
+	w_1_0_rate_ = normal_rate;
+	w_1_1_rate_ = normal_rate;
+	w_1_2_rate_ = normal_rate;
+
+	epsilon_ = natural_rate;
+
 }

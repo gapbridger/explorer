@@ -17,11 +17,13 @@ class Ellipse
 {
 private:
 	// initial parameters
-	double ini_mu_x_;
-	double ini_mu_y_;
-	double ini_long_axis_;
-	double ini_short_axis_;
-	double ini_angle_;
+	
+	double home_mu_x_;
+	double home_mu_y_;
+	double home_long_axis_;
+	double home_short_axis_;
+	double home_angle_;
+
 	// current parameters
 	double mu_x_;
 	double mu_y_;
@@ -34,19 +36,7 @@ private:
 	double prev_long_axis_;
 	double prev_short_axis_;
 	double prev_angle_;
-	// reference parameters... in reference frame
-	double ref_mu_x_;
-	double ref_mu_y_;
-	double ref_long_axis_;
-	double ref_short_axis_;
-	double ref_angle_;
-
-	double ini_ref_mu_x_;
-	double ini_ref_mu_y_;
-	double ini_ref_long_axis_;
-	double ini_ref_short_axis_;
-	double ini_ref_angle_;	
-
+	
 	double radius_;
 
 	/*cv::Mat ref_transform_;
@@ -61,74 +51,61 @@ private:
 	cv::Mat prev_cov_;
 	cv::Mat prev_cov_inv_;
 	// ref matrix
-	cv::Mat ref_mu_;
-	cv::Mat ref_cov_;
-	cv::Mat ref_cov_inv_;
-	cv::Mat ref_eigen_value_;
-	cv::Mat ref_eigen_vector_;
+	cv::Mat home_mu_;
+	cv::Mat home_cov_;
+	cv::Mat home_cov_inv_;	
 
 	cv::Mat eigen_value_;
 	cv::Mat eigen_vector_;		
+	cv::Mat home_eigen_value_;
+	cv::Mat home_eigen_vector_;				
 
-	cv::Mat ref_conic_;
-	cv::Mat conic_;
+	Transform home_transform_;
+	
+	cv::Mat a_home_; // home ellipse A
+	cv::Mat inv_a_home_; // home ellipse inv A
 
-	Transform ref_transform_;
+	cv::Mat prev_a_; // ellipse A
+	cv::Mat prev_inv_a_; // inverse of A
+
+	cv::Mat a_; // ellipse A
+	cv::Mat inv_a_; // inverse of A
 
 	double eta_;
 
-	// temporary variables
-	/*cv::Mat translate_;
-	cv::Mat scale_;
-	cv::Mat rotate_;
-	cv::Mat shear_;*/
-	
-	
-	
+	cv::Mat ini_transformation_;
+		
 public:
 	Transform transform_;
 
-	Ellipse(double initial_x, double initial_y, double initial_long_axis, double initial_short_axis, double initial_angle, double radius);		
-	void UpdateEllipseByAction(const cv::Mat& action);	
-	void UpdateRefEllipse(cv::Mat& points, cv::Mat& motio_ratio, cv::Mat& maha_dist);
-	void MVEE(cv::Mat& P, cv::Mat& c, cv::Mat& A, double tolerance);
-	void diag(cv::Mat& input, cv::Mat& output);
-	// void SetTransform(double x, double y, double long_axis, double short_axis, double angle, cv::Mat& transform);
-	void SetCovariance(double long_axis, double short_axis, double angle, cv::Mat& cov);
-	void SetMu(double mu_x, double mu_y, cv::Mat& mu);
-	void CopyToPrev();
-	void CalcInvCovar(const cv::Mat& cov, cv::Mat& cov_inv);
-	double CalcMahaDist(const cv::Mat& data, const cv::Mat& mu, const cv::Mat& cov_inv);
-	double CalcMahaDist(const cv::Mat& data);
-	bool CheckInsideEllipse(const cv::Mat& point, const cv::Mat& mu, const cv::Mat& cov_inv);
-	void DrawEllipse(cv::Mat& disp_img);
-	void DrawEllipse(cv::Mat& disp_img, double radius); // with external passed radius...
-	void DrawEllipse(cv::Mat& disp_img, double radius, COLOUR& color);
+	Ellipse(double initial_x, double initial_y, double initial_long_axis, double initial_short_axis, double initial_angle, double radius, cv::Mat ini_transformation);			
+	void TransformEllipse();
+	double MahalanobisDistance(const cv::Mat& data, const cv::Mat& inv_a);
+	bool CheckInsideEllipse(const cv::Mat& point, const cv::Mat& inv_a);
 	void GetKeyPointInEllipse(const cv::Mat& descriptor, const cv::Mat& key_point, cv::Mat& elips_descriptor, cv::Mat& elips_key_point, cv::Mat& elips_distance, int curr_frame_flag);
-	void ClassifyPointsForReferenceFrame(MatL match_data, cv::Mat& classified_points, cv::Mat& prev_classified_points, cv::Mat& maha_dist);
-	void SetRefEllipseParameters();
-	void SetConic(double x, double y, double long_axis, double short_axis, double angle, cv::Mat& conic);
-	cv::Mat ref_mu();
-	cv::Mat ref_cov();
+	void ClassifyPointsHomeEllipse(MatL match_data, cv::Mat& classified_points, cv::Mat& prev_classified_points, cv::Mat& maha_dist);
+	void UpdateHomeEllipse(cv::Mat& points, cv::Mat& motion_ratio, cv::Mat& maha_dist);
+	void UpdateEllipseVisualizationParameters(int initial_specification_flag);
+	void MVEE(cv::Mat& P, cv::Mat& c, cv::Mat& A, double tolerance);
+	void CopyToPrev();			
+	void DrawEllipse(cv::Mat& disp_img, double radius, COLOUR& color);
+	void DrawEllipse(cv::Mat& disp_img, double radius);
+	// helper functions
+	cv::Mat home_mu();
+	cv::Mat home_cov();
 	cv::Mat mu();
 	cv::Mat cov();
-	void set_ref_mu(const cv::Mat& mu);
-	void set_ref_cov(const cv::Mat& cov);
+	void set_a_home(int home_mu_cov_flag);
+	void set_inv_a_home();
+	void set_a();
+	void set_inv_a();
+	void set_home_mu();
+	void set_home_cov();
+	void set_home_mu(const cv::Mat& mu);
+	void set_home_cov(const cv::Mat& cov);
 	void set_eta(double eta);
+	
 	
 };
 
-
-
 #endif
-// cv::Mat ref_conic_;
-// cv::Mat conic_;
-// cv::Mat prev_conic_;
-// void SetConic(double x, double y, double long_axis, double short_axis, double angle, cv::Mat& conic);
-// void InitializeEllipse();
-// initial parameters
-// double ini_x_; // initial x position
-// double ini_y_; // initial y position
-// double ini_lx_; // initial long axis 
-// double ini_sx_; // initial short axis
-// double ini_ang_; // initial angle

@@ -26,6 +26,11 @@ private:
 	char common_output_prefix_[400];
 	char common_diagnosis_prefix_[400];
 
+	double width_shift_;
+	double height_shift_;
+	double width_scale_;
+	double height_scale_;
+
 	
 
 public:
@@ -40,12 +45,14 @@ public:
 	void LoadWeightsForDiagnosis(Transform& transform, Ellipse& ellipse, int output_dim, int input_dim, int diagnosis_idx);
 	void SaveTrend(fL* trend_array, int trend_number, int append_flag);
 	void SaveEllipse(Ellipse& ellipse);
+	void SavePropSinusoidalFeature(cv::Mat& train_prop_feature, cv::Mat& test_prop_feature);
+	void LoadPropSinusoidalFeature(cv::Mat& train_prop_feature, cv::Mat& test_prop_feature);
 	void LoadEllipse(Ellipse& ellipse);
 	void LoadImage(int frame_idx, cv::Mat& disp_img);
-	void LoadSiftKeyPoint(cv::Mat& descriptors, cv::Mat& key_points, int frame_idx);
-	void LoadAllSiftKeyPoint(MatL& descriptors, MatL& key_points, int start_idx, int end_idx);
+	void LoadSiftKeyPoint(cv::Mat& descriptors, cv::Mat& key_points, int frame_idx, cv::Mat& ini_transformation);
+	void LoadAllSiftKeyPoint(MatL& descriptors, MatL& key_points, int start_idx, int end_idx, cv::Mat& ini_transformation);
 	void LoadProprioception(int num_train_data, int num_test_data, cv::Mat& train_prop, cv::Mat& test_prop, cv::Mat& home_prop, cv::Mat& target_idx, cv::Mat& test_target_idx);
-	void AppendActionWeightName(char** dir_str_array);	
+	void AppendTestWeightName(char** dir_str_array);	
 	void AppendDiagnosisWeightName(char** dir_str_array);
 	void AppendTrendName(char** dir_str_array);	
 
