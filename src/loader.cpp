@@ -523,8 +523,8 @@ void Loader::RecordSiftKeyPoints()
 	int num_test_data = (int)num_data.at<double>(1, 0);
 
 	int start_frame = 0; // 16401; // 19201;
-	int shift = 10;
-	int end_frame = 35998; // num_train_data + num_test_data + shift; // 20000; // 19000; // 23247; // 19228; // 11374;
+	int shift = 0; // 10;
+	int end_frame = 8999; // 35998; // num_train_data + num_test_data + shift; // 20000; // 19000; // 23247; // 19228; // 11374;
 	int image_width = 640;
 	int image_height = 480;
 	cv::Mat curr_img;
@@ -551,7 +551,7 @@ void Loader::RecordSiftKeyPoints()
 		strcpy(input_dir, common_data_prefix_);
 		strcat(input_dir, tmp_dir);
 		curr_img = cv::imread(input_dir, CV_LOAD_IMAGE_GRAYSCALE);				
-		sift_detector.detect(curr_img, key_point_list); //  , mask);//, mask); // , evarBinary); // evDstBinaryCurr);
+		sift_detector.detect(curr_img, key_point_list, mask); //  , mask);//, mask); // , evarBinary); // evDstBinaryCurr);
 		sift_extractor.compute(curr_img, key_point_list, descriptor);
 		// recording
 		// assign key points value

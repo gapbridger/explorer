@@ -86,10 +86,12 @@ public:
 	Transform();	
 	// gradients
 	void CalculateGradient(cv::Mat& original_point, cv::Mat& predicted_point, cv::Mat& target_point, cv::Mat& feature);	
+	void CalculateGradientInv(cv::Mat& original_point, cv::Mat& predicted_point, cv::Mat& target_point, cv::Mat& feature);
 	void CalcMiniBatchInvGradient(cv::Mat& original_point, cv::Mat& transformed_point, cv::Mat& target_point, cv::Mat& feature, int batch_count, int batch_idx);
 	void UpdateWeightBatch(int iter, int current_dim);
 	// calculate inverse transformation			
 	void CalcTransformInv(cv::Mat& feature);	
+	void CalcTransform(cv::Mat& feature);
 	cv::Mat TransformDataPointInv(cv::Mat& point, int curr_flag);
 	cv::Mat TransformToPreviousFrame(cv::Mat& curr_img_point);
 	cv::Mat TransformToNextFrame(cv::Mat& prev_home_point);

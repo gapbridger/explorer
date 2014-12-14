@@ -52,7 +52,9 @@ private:
 	cv::Mat prev_cov_inv_;
 	// ref matrix
 	cv::Mat home_mu_;
+	cv::Mat prev_home_mu_;
 	cv::Mat home_cov_;
+	cv::Mat prev_home_cov_;
 	cv::Mat home_cov_inv_;	
 
 	cv::Mat eigen_value_;
@@ -80,7 +82,7 @@ public:
 
 	Ellipse(double initial_x, double initial_y, double initial_long_axis, double initial_short_axis, double initial_angle, double radius, cv::Mat ini_transformation);			
 	void TransformEllipse();
-	double MahalanobisDistance(const cv::Mat& data, const cv::Mat& inv_a);
+	double MahalanobisDistance(const cv::Mat& data, const cv::Mat& home_mu, const cv::Mat& home_cov);
 	bool CheckInsideEllipse(const cv::Mat& point, const cv::Mat& inv_a);
 	void GetKeyPointInEllipse(const cv::Mat& descriptor, const cv::Mat& key_point, cv::Mat& elips_descriptor, cv::Mat& elips_key_point, cv::Mat& elips_distance, int curr_frame_flag);
 	void ClassifyPointsHomeEllipse(MatL match_data, cv::Mat& classified_points, cv::Mat& prev_classified_points, cv::Mat& maha_dist);

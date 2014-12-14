@@ -24,6 +24,8 @@ Ellipse::Ellipse(double initial_x, double initial_y, double initial_long_axis, d
 	prev_cov_inv_ = cv::Mat::eye(2, 2, CV_64F);
 	home_mu_ = cv::Mat::zeros(2, 1, CV_64F);
 	home_cov_ = cv::Mat::eye(2, 2, CV_64F);
+	prev_home_mu_ = cv::Mat::zeros(2, 1, CV_64F);
+	prev_home_cov_ = cv::Mat::eye(2, 2, CV_64F);
 	home_cov_inv_ = cv::Mat::eye(2, 2, CV_64F);
 	
 	eigen_value_ = cv::Mat::zeros(2, 2, CV_64F);
@@ -60,14 +62,17 @@ Ellipse::Ellipse(double initial_x, double initial_y, double initial_long_axis, d
 void Ellipse::TransformEllipse()
 {		
 	// this is where the ellipse is transformed or here we should update A like this...	
-	inv_a_ = inv_a_home_ * transform_.transform_inv();
+	// inv_a_ = inv_a_home_ * transform_.transform_inv();
+	inv_a_ = inv_a_home_ * cv::Mat::eye(3, 3, CV_64F); 
 }
 // calculate mahalanobis distance
-double Ellipse::MahalanobisDistance(const cv::Mat& data, const cv::Mat& inv_a)
+double Ellipse::MahalanobisDistance(const cv::Mat& data, const cv::Mat& home_mu, const cv::Mat& home_cov)
 {
 	// calculate mahalanobis distance 
 	// size of data is 3 by 1, size of inv_a_ is 3 by 3
-	cv::Mat dist_mat = data.t() * inv_a.t() * inv_a * data;	
+	// cv::Mat dist_mat = data.t() * inv_a.t() * inv_a * data;	
+	cv::invert(home_cov, home_cov_inv_);
+	cv::Mat dist_mat = (data - home_mu).t() * home_cov_inv_ * (data - home_mu);
 	double dist = sqrt(dist_mat.at<double>(0, 0) - 1);
 	return dist;
 }
@@ -75,10 +80,11 @@ double Ellipse::MahalanobisDistance(const cv::Mat& data, const cv::Mat& inv_a)
 bool Ellipse::CheckInsideEllipse(const cv::Mat& point, const cv::Mat& inv_a)
 {
 	// radius is in the sense of mahalanobis distance
-	if(MahalanobisDistance(point, inv_a) <= radius_)
+	/*if(MahalanobisDistance(point, inv_a) <= radius_)
 		return true;
 	else
-		return false;
+		return false;*/
+	return false;
 }
 
 void Ellipse::GetKeyPointInEllipse(const cv::Mat& descriptor, const cv::Mat& key_point, cv::Mat& elips_descriptor, cv::Mat& elips_key_point, cv::Mat& elips_distance, int curr_frame_flag)
@@ -92,6 +98,9 @@ void Ellipse::GetKeyPointInEllipse(const cv::Mat& descriptor, const cv::Mat& key
 	// homogenous representation
 	cv::Mat pt = cv::Mat::zeros(3, 1, CV_64F);
 	pt.at<double>(2, 0) = 1.0;
+
+	cv::Mat tpt = cv::Mat::zeros(3, 1, CV_64F);
+	tpt.at<double>(2, 0) = 1.0;
 	
 	// double distance = 0;
 	for(int i = 0; i < num_key_point; i++)
@@ -99,10 +108,13 @@ void Ellipse::GetKeyPointInEllipse(const cv::Mat& descriptor, const cv::Mat& key
 		pt.at<double>(0, 0) = key_point.at<float>(i, 0); // x
 		pt.at<double>(1, 0) = key_point.at<float>(i, 1); // y
 		
+		cv::Mat transform_inv = transform_.transform_inv();
+		tpt = transform_inv * pt;
+		
 		if(curr_frame_flag)
-			distance = MahalanobisDistance(pt, inv_a_);
+			distance = MahalanobisDistance(tpt.rowRange(0, 2), home_mu_, home_cov_);
 		else
-			distance = MahalanobisDistance(pt, prev_inv_a_);
+			distance = MahalanobisDistance(tpt.rowRange(0, 2), prev_home_mu_, prev_home_cov_);
 
 		if(distance <= radius_)
 		{
@@ -232,7 +244,9 @@ void Ellipse::CopyToPrev()
 	prev_angle_ = angle_;
 
 	mu_.copyTo(prev_mu_);
+	home_mu_.copyTo(prev_home_mu_);
 	cov_.copyTo(prev_cov_);
+	home_cov_.copyTo(prev_home_cov_);
 
 	transform_.CopyToPrev();
 	home_transform_.CopyToPrev();

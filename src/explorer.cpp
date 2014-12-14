@@ -42,7 +42,7 @@ Explorer::Explorer(int dir_id, int num_iteration, int expanding_period, int load
 {    
 	dir_id_ = dir_id;
 	dim_action_ = 6; // dimension of action
-	dim_feature_ = 8; // 8; // 8; // 10;
+	dim_feature_ = 8; // 9; // 8; // 8; // 10;
 	trend_number_ = 15; // 14
 	num_iteration_ = num_iteration;
 	range_expanding_period_ = expanding_period;
@@ -55,7 +55,7 @@ Explorer::Explorer(int dir_id, int num_iteration, int expanding_period, int load
 	num_train_data_ = (int)num_data.at<double>(0, 0); // 16400 * 19 / 20; // 17100; // 20250; // 17100; // 20250; // 20880; // 20250; // 17280; // 9900; // 18000;
 	num_test_data_ = (int)num_data.at<double>(1, 0); // 16400 / 20; // 1900; // 2250; // 1900; // 2250; // 2320; // 2250; // 1920; // 1100; // 2000;
 	max_exploration_range_ = 1.0; // 1.00 // 1.41; // 0.71; // sqrt(2) should be fine... 0.5;
-	starting_exploration_range_ = 0.04; // 0.2; // 0.02; // 0.002; // 0.101;
+	starting_exploration_range_ = 0.02; // 0.2; // 0.02; // 0.002; // 0.101;
     starting_exploration_range_rotation_ = 0.04;
     max_exploration_range_rotation_ = 4.5;
 	avg_cost_ = 0;		
@@ -247,6 +247,8 @@ void Explorer::SetFeatureSinusoidal(cv::Mat& feature, int aim_idx, cv::Mat& prop
 	// feature = cv::Mat::zeros(, 1, CV_64F);
 	for(int i = 0; i < dim_joint; i++) {
 		for(int j = 0; j < dim_joint; j++) {
+			// if(!(i == 0 && j == 0))
+			// feature.at<double>(i * dim_joint + j, 0) = p1.at<double>(i, 0) * p2.at<double>(j, 0);
 			if(!(i == 0 && j == 0))
 				feature.at<double>(i * dim_joint + j - 1, 0) = p1.at<double>(i, 0) * p2.at<double>(j, 0);
 		}
@@ -281,6 +283,8 @@ void Explorer::SetFeatureSinusoidal(cv::Mat& home_feature)
 	for(int i = 0; i < dim_joint; i++) {
 		for(int j = 0; j < dim_joint; j++) {
 			// if(i != 0 || j != 0)
+			// if(!(i == 0 && j == 0))
+			// home_feature.at<double>(i * dim_joint + j, 0) = p1.at<double>(i, 0) * p2.at<double>(j, 0);
 			if(!(i == 0 && j == 0))
 				home_feature.at<double>(i * dim_joint + j - 1, 0) = p1.at<double>(i, 0) * p2.at<double>(j, 0);
 		}
@@ -638,7 +642,7 @@ void Explorer::Train()
 			// feature = feature - feature_home;	
 			// feature dimension problem...
 			elips.transform_.CalcTransformInv(feature);
-			elips.TransformEllipse();				
+			// elips.TransformEllipse();				
 			elips.GetKeyPointInEllipse(descriptors_, key_points_, elips_descriptors_, elips_key_points_, elips_distance_, 1);				
 			EvaluateGradientAndUpdate(feature, 1, aim_idx, elips, iteration_count);					
 		}	
