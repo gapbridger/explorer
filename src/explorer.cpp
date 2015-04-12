@@ -1,1121 +1,851 @@
-// With google c++ coding style here
+// with google c++ coding style here
 #include "../inc/explorer.h"
 
-COLOUR GetColour(double v, double vmin, double vmax)
-{
-	COLOUR c = {1.0,1.0,1.0}; // white
-	double dv;
-
-	if (v < vmin)
-		v = vmin;
-	if (v > vmax)
-		v = vmax;
-
-	dv = vmax - vmin;
-
-	if (v < (vmin + 0.25 * dv)) 
-	{
-		c.r = 0;
-		c.g = 4 * (v - vmin) / dv;
-	}
-	else if (v < (vmin + 0.5 * dv)) 
-	{
-		c.r = 0;
-		c.b = 1 + 4 * (vmin + 0.25 * dv - v) / dv;
-	}
-	else if (v < (vmin + 0.75 * dv)) 
-	{
-		c.r = 4 * (v - vmin - 0.5 * dv) / dv;
-		c.b = 0;
-	}
-	else
-	{
-		c.g = 1 + 4 * (vmin + 0.75 * dv - v) / dv;
-		c.b = 0;
-	}
-
-	return c;
-}
-
 // constructor
-Explorer::Explorer
-	(	
-	int dir_id, 
-	int num_iteration,
-	int expanding_period,
-	char* dir
-	)
-{    
-	dir_id_ = dir_id;
-	dim_action_ = 5; // dimension of action
-	dim_feature_ = 10;
-	trend_number_ = 12;
-	num_iteration_ = num_iteration;
-	range_expanding_period_ = expanding_period;
+Explorer::Explorer(int id, 
+				   char* data_set,
+				   int train_iteration, 
+				   int expand_iteration, 
+				   int dim_transform, 
+				   int num_joints, 
+				   double normal_learning_rate,
+				   double ini_exploration_range,
+				   int train_data_size,
+				   int test_data_size,
+				   const cv::Mat& joint_idx,
+				   const cv::Mat& joint_range_limit,
+				   double neighborhood_range, 
+				   int icm_iteration, 
+				   double icm_beta, 
+				   double icm_sigma,
+				   int max_num_neighbors) 
+	: transform_(dim_transform, 
+				 num_joints, 
+				 normal_learning_rate)	  
+{    	
+	sprintf(data_set_, data_set);		
+	id_ = id; 	
+	train_iteration_ = train_iteration;
+	expand_iteration_ = expand_iteration;
+	num_joints_ = num_joints;
+	dim_transform_ = dim_transform;
+	num_weights_ = dim_transform_ * (dim_transform_ - 1);
+	train_data_size_ = train_data_size;
+	test_data_size_ = test_data_size;
+	normal_learning_rate_ = normal_learning_rate;
+	// 3 is the dim of sinusoidal component, 1 sin cos
+	dim_feature_ = pow(3.0, num_joints_) - 1;
+	// this should also be changable and don't want to put it in config...
+	num_trend_ = num_weights_ * num_joints + 1;		
+	path_count_ = 0;		
+    max_exploration_range_ = 1;
+    ini_exploration_range_ = ini_exploration_range;	
+	avg_cost_ = 0;	
+	
+	targets_ = std::vector<double>(num_joints_);
+	prev_targets_ = std::vector<double>(num_joints_);
+	explore_path_target_ = cv::Mat::zeros(1, num_joints_, CV_64F);
+	prev_explore_path_target_ = cv::Mat::zeros(1, num_joints_, CV_64F);
+	train_prop_ = cv::Mat::zeros(train_data_size_, num_joints_, CV_64F);    
+	test_prop_ = cv::Mat::zeros(test_data_size_, num_joints_, CV_64F);    
+    home_prop_ = cv::Mat::zeros(1, num_joints_, CV_64F); // previous column, now row
+	curr_prop_ = cv::Mat::zeros(1, num_joints, CV_64F); // previous column, now row
+	prop_diff_ = cv::Mat::zeros(train_data_size_, num_joints_, CV_64F);
+	prop_dist_ = cv::Mat::zeros(train_data_size_, 1, CV_64F);
+	train_target_idx_ = cv::Mat::zeros(train_data_size_, 1, CV_64F);    
+	test_target_idx_ = cv::Mat::zeros(test_data_size_, 1, CV_64F);    
+	aim_idx_matrix_ = cv::Mat::zeros(train_data_size_, 1, CV_64F);
+	feature_ = cv::Mat::zeros(dim_feature_, 1, CV_64F);	
+	feature_home_ = cv::Mat::zeros(dim_feature_, 1, CV_64F);	
+	home_cloud_ = std::vector<cv::Mat>(num_joints_);
+	predicted_cloud_ = std::vector<cv::Mat>(num_joints_);
+	joint_idx.copyTo(joint_idx_);
+	explore_path_kdtree_indices_ = cv::Mat::zeros(train_data_size_, 1, CV_32S);
+	explore_path_kdtree_dists_ = cv::Mat::zeros(train_data_size_, 1, CV_32F);
+
+	joint_idx_ = cv::Mat::zeros(num_joints_, 1, CV_64F);
+	joint_range_limit_ = cv::Mat::zeros(num_joints_, 2, CV_64F);
+	joint_idx.copyTo(joint_idx_);
+	joint_range_limit.copyTo(joint_range_limit_);
+	
+	neighborhood_range_ = neighborhood_range;
+	icm_beta_ = icm_beta;
+	icm_sigma_ = icm_sigma;
+	icm_iteration_ = icm_iteration;
+	max_num_neighbors_ = max_num_neighbors;
+}
+
+Explorer::~Explorer()
+{
+}
+
+void Explorer::Train()
+{
 	char input_dir[400];
-	sprintf(input_dir, "D:/Document/HKUST/Year 5/Research/Data/Arm Images/");
-	strcat(input_dir, dir);
-	strcat(input_dir, "/num_data.bin");
-	cv::Mat num_data = cv::Mat::zeros(2, 1, CV_64F);
-	FileIO::ReadMatDouble(num_data, 2, 1, input_dir);
-	num_train_data_ = (int)num_data.at<double>(0, 0); // 16400 * 19 / 20; // 17100; // 20250; // 17100; // 20250; // 20880; // 20250; // 17280; // 9900; // 18000;
-	num_test_data_ = (int)num_data.at<double>(1, 0); // 16400 / 20; // 1900; // 2250; // 1900; // 2250; // 2320; // 2250; // 1920; // 1100; // 2000;
-	max_exploration_range_ = 1.0; // 1.00 // 1.41; // 0.71; // sqrt(2) should be fine... 0.5;
-	starting_exploration_range_ = 0.04; // 0.002; // 0.101;
-	avg_cost_ = 0;		
-	path_count_ = 0;
-	target_p_1_ = 0;
-	target_p_2_ = 0;
-	prev_target_p_1_ = 0;
-	prev_target_p_2_ = 0;
+	char output_dir[400];	
+	int aim_idx = 0; // sorted idx 
+	int aim_frame_idx = 0; // actual frame idx pointed to
+	int record_trend_interval = 1000;
+	int record_diagnosis_interval = 1000;
+	int query_cloud_size = 0;
+	cv::Mat predicted_cloud_f; // matched_target_cloud, transformed_query_cloud, indices, min_dists;
+	cv::Mat train_prop_f;
+	std::mt19937 engine(rd_());		
+	std::vector<std::vector<double>> trend_array(num_trend_, std::vector<double>(0));
+	std::vector<cv::Mat> indices(num_joints_);
+    std::vector<cv::Mat> min_dists(num_joints_);    
+	std::vector<cv::Mat> segmented_target_cloud(num_joints_);
+	std::vector<cv::Mat> segmented_home_cloud(num_joints_);
+	std::vector<cv::Mat> segmented_prediction_cloud(num_joints_);
+	cv::Mat cloud_f;
+	std::vector<int> path(0);
 
-	action_ = cv::Mat::zeros(dim_action_, 1, CV_64F);	
-	train_prop_ = cv::Mat::zeros(num_train_data_, 2, CV_64F);
-	test_prop_ = cv::Mat::zeros(num_test_data_, 2, CV_64F);	
-	home_prop_ = cv::Mat::zeros(1, 2, CV_64F);	
-	img_point_ = cv::Mat::zeros(3, 1, CV_64F);			img_point_.at<double>(2, 0) = 1; // image frame
-	prev_img_point_ = cv::Mat::zeros(3, 1, CV_64F);		prev_img_point_.at<double>(2, 0) = 1; // image frame
-	ref_point_ = cv::Mat::zeros(3, 1, CV_64F);			ref_point_.at<double>(2, 0) = 1; // reference frame
-	prev_ref_point_ = cv::Mat::zeros(3, 1, CV_64F);		prev_ref_point_.at<double>(2, 0) = 1; // reference frame	
-	curr_prop_ = cv::Mat::zeros(1, 2, CV_64F); 
-	curr_prop_matrix_ = cv::Mat::zeros(num_train_data_, 2, CV_64F);
-	prop_diff_ = cv::Mat::zeros(num_train_data_, 2, CV_64F);
-	prop_dist_ = cv::Mat::zeros(num_train_data_, 1, CV_64F);
-	aim_idx_matrix_ = cv::Mat::zeros(num_train_data_, 1, CV_32S);
-	feature_data_ = cv::Mat::zeros(2, 1, CV_64F);
-
-	sprintf(dir_, dir);
-}
-
-Explorer::~Explorer(){
-}
-
-// get polynomial kernel
-void Explorer::SetKernel(fL& kernel_list, cv::Mat& data, double* p_current_data, int dim_left, int curr_pos, int data_length, int kernel_dim, int value_flag)
-{
-	int pos = curr_pos;
-	for(int dim = 0; dim <= dim_left; dim++)
-	{
-		if(pos == 0 && dim == 0)
-		{			
-			kernel_list.push_back(0.0); // bias
-			int next_pos = pos + 1;
-			double tmp_data = *p_current_data;
-			if(kernel_dim != 0)
-				SetKernel(kernel_list, data, p_current_data, kernel_dim , next_pos, data_length, kernel_dim, value_flag);
-			*p_current_data = tmp_data;
-		}
-		else if(dim == 0)
-		{
-			int next_pos = pos < data_length - 1 ? pos + 1 : pos;
-			double tmp_data = *p_current_data;
-			int actual_dim_left = dim_left - dim;
-			if(kernel_dim != 0 && pos != next_pos)
-				SetKernel(kernel_list, data, p_current_data, actual_dim_left , next_pos, data_length, kernel_dim, value_flag);
-			*p_current_data = tmp_data;
-		}
-		else if(dim != 0)
-		{
-			*p_current_data = (*p_current_data) * data.at<double>(pos, 0); // pow(data[pos], (double)dim);
-			kernel_list.push_back(*p_current_data);
-			int next_pos = pos < data_length - 1 ? pos + 1 : pos;
-			int actual_dim_left = dim_left - dim;
-			double tmp_data = *p_current_data;
-			if(actual_dim_left != 0 && pos != next_pos)
-				SetKernel(kernel_list, data, p_current_data, actual_dim_left, next_pos, data_length, kernel_dim, value_flag);
-			*p_current_data = tmp_data;
-		}
-	}
-}
-
-// get policy state
-// it is the aim idx rather than the frame index because the prop loaded is sorted...
-void Explorer::SetFeature(cv::Mat& feature, int aim_idx, cv::Mat& prop, cv::Mat& home_prop)
-{
-	double delta_p1 = prop.at<double>(aim_idx, 0) - home_prop.at<double>(0, 0);
-	double delta_p2 = prop.at<double>(aim_idx, 1) - home_prop.at<double>(0, 1);
-	double current_data = 1.0;
-	double* p_current_data = &current_data;
-	int kernel_dim = 3;
-	int curr_pos = 0;
-	double shift = 0.0;
-	kernel_list_.clear();
-	feature_data_.at<double>(0, 0) = delta_p1 + shift;
-	feature_data_.at<double>(1, 0) = delta_p2 + shift;
-	SetKernel(kernel_list_, feature_data_, p_current_data, kernel_dim, curr_pos, 2, kernel_dim, 0); 
-	double sum = 0;
-	for(int i = 0; i < kernel_list_.size(); i++)
-		feature.at<double>(i, 0) = kernel_list_[i];
-}
-
-int Explorer::GenerateAimIndex(std::mt19937& engine, int current_iteration)
-{
-	int aim_idx = 0;   	
-	double current_range = 0;	
-	double interval_range_low = 0;
-	double interval_range_high = 0;
-	double dist = 0;
-	current_range = starting_exploration_range_ + (max_exploration_range_ - starting_exploration_range_) * current_iteration / range_expanding_period_;	
-	current_range = current_range > max_exploration_range_ ? max_exploration_range_ : current_range;
-	std::uniform_real_distribution<double> uniform(-1.0 * current_range, 1.0 * current_range);
-	interval_range_low = current_range / 4.5;
-	interval_range_high = current_range / 3.5;
-	/*curr_prop_.at<double>(0, 0) = uniform(engine); 
-	curr_prop_.at<double>(0, 1) = uniform(engine);*/
-
-	// ensure interval...
-	do
-	{
-		target_p_1_ = uniform(engine);
-		target_p_2_ = uniform(engine);
-		dist = sqrt(pow(target_p_1_ - prev_target_p_1_, 2) + pow(target_p_2_ - prev_target_p_2_, 2));
-	}
-	while(dist < interval_range_low || dist > interval_range_high);
-	curr_prop_.at<double>(0, 0) = target_p_1_; 
-	curr_prop_.at<double>(0, 1) = target_p_2_;
-	prev_target_p_1_ = target_p_1_;
-	prev_target_p_2_ = target_p_2_;	
-
-	//*************************//
-
-	curr_prop_matrix_ = repeat(curr_prop_, num_train_data_, 1);
-	prop_diff_ = train_prop_ - curr_prop_matrix_;
-	prop_diff_ = prop_diff_.mul(prop_diff_);
-	reduce(prop_diff_, prop_dist_, 1, CV_REDUCE_SUM);
-	sortIdx(prop_dist_, aim_idx_matrix_, CV_SORT_EVERY_COLUMN + CV_SORT_ASCENDING);	
-	aim_idx = (int)aim_idx_matrix_.at<int>(0, 0);		
-	return aim_idx;
-}
-
-void Explorer::GenerateLinePath(fL& path_p_1, fL& path_p_2, double target_p_1, double target_p_2, double prev_target_p_1, double prev_target_p_2)
-{		
-	double max_speed = 8 / 20.0;
-	double path_length = sqrt(pow(target_p_1 - prev_target_p_1, 2) + pow(target_p_2 - prev_target_p_2, 2));
-	int num_frame_path = (int)(path_length / max_speed) + 1;
-
-	path_p_1.clear();
-	path_p_2.clear();
-
-	for(int i = 1; i <= num_frame_path; i++)
-	{
-		path_p_1.push_back(prev_target_p_1 + (target_p_1 - prev_target_p_1) * i / num_frame_path);
-		path_p_2.push_back(prev_target_p_2 + (target_p_2 - prev_target_p_2) * i / num_frame_path);
-	}
-
-}
-
-int Explorer::GenerateAimIndexLinePath(std::mt19937& engine, int current_iteration)
-{
-	int aim_idx = 0;
-	double current_range = 0;
+	Loader loader(num_weights_, num_joints_, dim_feature_, num_trend_, id_, data_set_);
+	loader.FormatWeightsForTestDirectory();
+	loader.FormatTrendDirectory();
+	loader.LoadProprioception(train_data_size_, test_data_size_, train_prop_, test_prop_, home_prop_, train_target_idx_, test_target_idx_, joint_idx_);	
+	LoadHomeCloud(loader);
+	// initialize probabilities to be equal...
+	weight_label_probabilities_ = cv::Mat::zeros(home_cloud_[0].rows, num_joints_, CV_64F) + 1 / num_joints_;
+	cv::Mat home_cloud_weight_label = cv::Mat::zeros(home_cloud_[0].rows, num_joints_, CV_64F);
+	cv::Mat potential = cv::Mat::zeros(home_cloud_[0].rows, num_joints_, CV_64F);
+	// some parameters need to be externalized
+	cv::Mat home_cloud_neighbor_indices, home_cloud_neighbor_dists;
+	BuildModelGraph(home_cloud_[0], num_joints_, home_cloud_neighbor_indices, home_cloud_neighbor_dists, neighborhood_range_, max_num_neighbors_);
+	train_prop_.convertTo(train_prop_f, CV_32F);
+	cv::flann::Index kd_trees(train_prop_f, cv::flann::KDTreeIndexParams(4), cvflann::FLANN_DIST_EUCLIDEAN); // build kd tree
 	
-	current_range = starting_exploration_range_ + (max_exploration_range_ - starting_exploration_range_) * current_iteration / range_expanding_period_;	
-	current_range = current_range > max_exploration_range_ ? max_exploration_range_ : current_range;
-	std::uniform_real_distribution<double> uniform(-1.0 * current_range, 1.0 * current_range);	  	
-	
-	// generate path
-	if(path_count_ == 0)
+	cv::Mat feature_zero = cv::Mat::zeros(dim_feature_, 1, CV_64F);	
+	SetFeature(feature_home_, feature_zero, num_joints_, home_prop_);
+	home_prop_.copyTo(prev_explore_path_target_);
+	// need to put this in configuration
+	cv::Mat scale = cv::Mat::zeros(num_joints_, 2, CV_64F);
+	for(int i = 0; i < num_joints_; i++)
 	{
-		target_p_1_ = uniform(engine);
-		target_p_2_ = uniform(engine);
-		GenerateLinePath(path_p_1_, path_p_2_, target_p_1_, target_p_2_, prev_target_p_1_, prev_target_p_2_);
-		prev_target_p_1_ = target_p_1_;
-		prev_target_p_2_ = target_p_2_;
-		path_count_ = path_p_1_.size();
+		scale.at<double>(i, 0) = joint_range_limit_.at<double>(i, 0) - home_prop_.at<double>(0, i);
+		scale.at<double>(i, 1) = joint_range_limit_.at<double>(i, 1) - home_prop_.at<double>(0, i);
 	}
+	// main loop
+	// always start from home pose
 
-	curr_prop_.at<double>(0, 0) = path_p_1_[path_p_1_.size() - path_count_]; 
-	curr_prop_.at<double>(0, 1) = path_p_2_[path_p_1_.size() - path_count_];
-	path_count_--;
-	// path_p_1_.erase(path_p_1_.begin());
-	// path_p_2_.erase(path_p_2_.begin());
+	/********************* just for display ************************/
+	boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer;
+	viewer = boost::shared_ptr<pcl::visualization::PCLVisualizer>(new pcl::visualization::PCLVisualizer("cloud Viewer"));
+	viewer->setBackgroundColor(0, 0, 0);	
+	viewer->initCameraParameters();	
+	/********************* just for display ************************/
 
-	curr_prop_matrix_ = repeat(curr_prop_, num_train_data_, 1);
-	prop_diff_ = train_prop_ - curr_prop_matrix_;
-	prop_diff_ = prop_diff_.mul(prop_diff_);
-	reduce(prop_diff_, prop_dist_, 1, CV_REDUCE_SUM);
-	sortIdx(prop_dist_, aim_idx_matrix_, CV_SORT_EVERY_COLUMN + CV_SORT_ASCENDING);	
-	aim_idx = (int)aim_idx_matrix_.at<int>(0, 0);
-
-	return aim_idx;
-
-}
-
-void Explorer::EvaluateGradientAndUpdate(cv::Mat& feature, int update_flag, int aim_idx, Ellipse& elips, int iteration_count)
-{	
-	int prev_match_idx = 0;
-	int aim_match_idx = 0;		
-	int match_point_count = 0;
-	int gradient_match_point_count = 0; // the points wihin the small radius, typically 1, used to calculate the batch gradient... radius is set to 4 normally...
-	int gradient_batch_idx = 0;
-	int match_point_idx = 0;
-	int check_idx = 0;	
-	int match_point_info_size = 13;	
-	double curr_diff = 0;
-	double predicted_motion_ratio = 0;
-	match_point_info_.clear();
-    unique_match_point_.clear();
-	cv::Mat predicted_img_point;
-	
-	cv::Mat transform = cv::Mat::zeros(3, 3, CV_64F);
-	if(elips_descriptors_.rows != 0)
-	{
-		// interface between double and float...		
-		/*cv::Mat tmp_prev_descriptors = cv::Mat::zeros(elips_prev_descriptors_.rows, elips_prev_descriptors_.cols, CV_32F);
-		cv::Mat tmp_descriptors = cv::Mat::zeros(elips_descriptors_.rows, elips_descriptors_.cols, CV_32F);
-		elips_prev_descriptors_.convertTo(tmp_prev_descriptors, CV_32F);
-		elips_descriptors_.convertTo(tmp_descriptors, CV_32F);
-		matcher_.match(tmp_prev_descriptors, tmp_descriptors, matches_);	*/
-
-		//cv::Mat tmp_prev_descriptors = cv::Mat::zeros(elips_prev_descriptors_.rows, elips_prev_descriptors_.cols, CV_32F);
-		//cv::Mat tmp_descriptors = cv::Mat::zeros(elips_descriptors_.rows, elips_descriptors_.cols, CV_32F);
-		//elips_prev_descriptors_.convertTo(tmp_prev_descriptors, CV_32F);
-		//elips_descriptors_.convertTo(tmp_descriptors, CV_32F);
-		matcher_.match(elips_prev_descriptors_, elips_descriptors_, matches_);	
-	}
-	else
-		return;
-
-	if(matches_.size() == 0)
-		return;
-	// get raw reward
-	for(int i = 0; i < matches_.size(); i++)
-	{
-		// base_match_idx = matches_[i].queryIdx;
-		prev_match_idx = matches_[i].queryIdx;
-		aim_match_idx = matches_[i].trainIdx;
-		// key point location	
-		prev_img_point_.at<double>(0, 0) = elips_prev_key_points_.at<float>(prev_match_idx, 0);
-		prev_img_point_.at<double>(1, 0) = elips_prev_key_points_.at<float>(prev_match_idx, 1);	
-		prev_img_point_.at<double>(2, 0) = 1.0;
-		img_point_.at<double>(0, 0) = elips_key_points_.at<float>(aim_match_idx, 0);
-		img_point_.at<double>(1, 0) = elips_key_points_.at<float>(aim_match_idx, 1);
-		img_point_.at<double>(2, 0) = 1.0;
-		match_point_info_.push_back(cv::Mat::zeros(1, match_point_info_size, CV_64F));
-		// inverse transform to compare with target point in reference frame...
-		prev_ref_point_ = elips.transform_.TransformDataPointInv(prev_img_point_, 0);
-		ref_point_ = elips.transform_.TransformDataPointInv(img_point_, 1); // transform image coordinate to reference coordinate		
-		predicted_img_point = elips.transform_.InterFrameTransformImg(prev_img_point_);				
-		predicted_motion_ratio = 1 - cv::norm(img_point_ - predicted_img_point) / cv::norm(img_point_ - prev_img_point_);
-		predicted_motion_ratio = predicted_motion_ratio < 0 ? 0 : predicted_motion_ratio;
-		
-		curr_diff = 1 - exp(-0.5 * GRADIENT_SCALE * (pow(prev_ref_point_.at<double>(0, 0) - ref_point_.at<double>(0, 0), 2) + pow(prev_ref_point_.at<double>(1, 0) - ref_point_.at<double>(1, 0), 2)));		
-		match_point_info_[i].at<double>(0, 0) = curr_diff; // reward		
-		match_point_info_[i].at<double>(0, 1) = prev_match_idx; match_point_info_[i].at<double>(0, 2) = aim_match_idx; // base idx and aim idx		
-		match_point_info_[i].at<double>(0, 3) = prev_img_point_.at<double>(0, 0); match_point_info_[i].at<double>(0, 4) = prev_img_point_.at<double>(1, 0); // image frame base point
-		match_point_info_[i].at<double>(0, 5) = img_point_.at<double>(0, 0); match_point_info_[i].at<double>(0, 6) = img_point_.at<double>(1, 0); // image frame aim point
-		match_point_info_[i].at<double>(0, 7) = prev_ref_point_.at<double>(0, 0); match_point_info_[i].at<double>(0, 8) = prev_ref_point_.at<double>(1, 0); // back in reference frame
-		match_point_info_[i].at<double>(0, 9) = ref_point_.at<double>(0, 0); match_point_info_[i].at<double>(0, 10) = ref_point_.at<double>(1, 0); // image frame predicting point
-		match_point_info_[i].at<double>(0, 11) = elips_distance_.at<double>(aim_match_idx, 0); // elips.CalcMahaDist(img_point_.rowRange(0, 2));
-		match_point_info_[i].at<double>(0, 12) = predicted_motion_ratio;		
-   
-	}
-	sort(match_point_info_.begin(), match_point_info_.end(), DistCompare());		
-	avg_cost_ = 0;
-	unique_match_point_.push_back(cv::Mat::zeros(1, match_point_info_size, CV_64F));	
-	for(int i = 0; i < match_point_info_size; i++)
-		unique_match_point_[match_point_count].at<double>(0, i) = match_point_info_[match_point_idx].at<double>(0, i); // assign first one
-	if(unique_match_point_[match_point_count].at<double>(0, 11) <= 1.0)
-	{
-		avg_cost_ += unique_match_point_[match_point_count].at<double>(0, 0);
-		gradient_match_point_count++;
-	}					
-	match_point_count++;	
-	// either base point equal or aim point equal or base idx equal or aim idx equal, break...
-	for(match_point_idx = 1; match_point_idx < matches_.size(); match_point_idx++)
-	{
-		for(check_idx = 0; check_idx < match_point_count; check_idx++)
+	for(unsigned long iteration_count = 0; iteration_count < train_iteration_; iteration_count++)
+	{		
+		// feature
+		aim_idx = iteration_count == 0 ? 0 : GenerateAimIndex(engine, kd_trees, path, iteration_count, scale);
+		curr_prop_ = train_prop_.rowRange(aim_idx, aim_idx + 1);
+		SetFeature(feature_, feature_home_, num_joints_, curr_prop_);
+		// load cloud
+		aim_frame_idx = train_target_idx_.at<double>(aim_idx, 0);
+		loader.LoadBinaryPointCloud(cloud_, aim_frame_idx);
+		// calc transformation and transform cloud
+		transform_.CalcTransformation(feature_);
+		transform_.TransformCloud(home_cloud_, transform_.get_transform(), predicted_cloud_); // need to investigate home cloud issue
+		if(iteration_count != 0)
 		{
-			if(match_point_info_[match_point_idx].at<double>(0, 1) == unique_match_point_[check_idx].at<double>(0, 1) || // base idx equal
-				match_point_info_[match_point_idx].at<double>(0, 2) == unique_match_point_[check_idx].at<double>(0, 2) || // aim idx equal
-				(match_point_info_[match_point_idx].at<double>(0, 3) == unique_match_point_[check_idx].at<double>(0, 3) &&
-				match_point_info_[match_point_idx].at<double>(0, 4) == unique_match_point_[check_idx].at<double>(0, 4)) ||
-				(match_point_info_[match_point_idx].at<double>(0, 5) == unique_match_point_[check_idx].at<double>(0, 5) &&
-				match_point_info_[match_point_idx].at<double>(0, 6) == unique_match_point_[check_idx].at<double>(0, 6)))
-			{
-				break;
+			// convert to 32 bit and build kd tree
+			cloud_.convertTo(cloud_f, CV_32F);
+			cv::flann::Index target_cloud_kd_trees(cloud_f, cv::flann::KDTreeIndexParams(4), cvflann::FLANN_DIST_EUCLIDEAN); // build kd tree 
+			for(int i = 0; i < num_joints_; i++)
+			{       
+				indices[i] = cv::Mat::zeros(predicted_cloud_[i].rows, 1, CV_32S);
+				min_dists[i] = cv::Mat::zeros(predicted_cloud_[i].rows, 1, CV_32F);
+				predicted_cloud_[i].convertTo(predicted_cloud_f, CV_32F); 		       
+				target_cloud_kd_trees.knnSearch(predicted_cloud_f, indices[i], min_dists[i], 1, cv::flann::SearchParams(64)); // kd tree search, index indices the matches in query cloud
 			}
-		}
-		if(check_idx == match_point_count)
-		{
-			unique_match_point_.push_back(cv::Mat::zeros(1, match_point_info_size, CV_64F));
-			for(int i = 0; i < match_point_info_size; i++)
-				unique_match_point_[match_point_count].at<double>(0, i) = match_point_info_[match_point_idx].at<double>(0, i);			
-			if(unique_match_point_[match_point_count].at<double>(0, 11) <= 1.0)
+			if(iteration_count == 1)
+				InitializeModelLabel(min_dists, num_joints_, icm_sigma_, home_cloud_weight_label, weight_label_probabilities_);
+			else
+				IteratedConditionalModes(home_cloud_neighbor_indices, min_dists, home_cloud_weight_label, potential, num_joints_, icm_iteration_, max_num_neighbors_, icm_beta_, icm_sigma_); // update label, only one iteration first...
+			// shuffle points according to label
+			// Segment(matched_target_cloud, home_cloud_weight_label, cloud_, indices, num_joints_); // output memory allocated inside function
+			Segment(segmented_target_cloud, segmented_home_cloud, segmented_prediction_cloud, home_cloud_weight_label, cloud_, home_cloud_[0], predicted_cloud_, indices, num_joints_);
+			// update weights, matched target cloud should be a vector...
+			// transform_.CalculateGradient(segmented_target_cloud, predicted_cloud_, home_cloud_, feature_); // target, prediction, query, without label...
+			transform_.CalculateGradient(segmented_target_cloud, segmented_prediction_cloud, segmented_home_cloud, feature_); // target, prediction, query, without label...
+			transform_.Update();
+			// record data
+			RecordData(loader, trend_array, aim_idx, iteration_count, record_trend_interval, record_diagnosis_interval);
+
+			/******************** just for display ******************/
+			if(iteration_count % 200 == 1)
 			{
-				avg_cost_ += unique_match_point_[match_point_count].at<double>(0, 0);
-				gradient_match_point_count++;
-			}
-			match_point_count++;
-			// if(match_point_count > 11)
-			// 	break;
-		}
-	}
-	// calculate average cost	
-	if(gradient_match_point_count != 0)
-		avg_cost_ = avg_cost_ / gradient_match_point_count;
-	if(update_flag)
-	{
-		if(gradient_match_point_count != 0)
-		{
-			for(int i = 0; i < match_point_count; i++)
-			{
-				if(unique_match_point_[i].at<double>(0, 11) <= 1.0)
+				
+				for(int i = 0; i < num_joints_; i++)
 				{
-					prev_ref_point_.at<double>(0, 0) = unique_match_point_[i].at<double>(0, 7); prev_ref_point_.at<double>(1, 0) = unique_match_point_[i].at<double>(0, 8);		
-					prev_ref_point_.at<double>(2, 0) = 1.0;
-					img_point_.at<double>(0, 0) = unique_match_point_[i].at<double>(0, 5); img_point_.at<double>(1, 0) = unique_match_point_[i].at<double>(0, 6);
-					img_point_.at<double>(2, 0) = 1.0;
-					ref_point_.at<double>(0, 0) = unique_match_point_[i].at<double>(0, 9); ref_point_.at<double>(1, 0) = unique_match_point_[i].at<double>(0, 10);
-					ref_point_.at<double>(2, 0) = 1.0;
-					// inverse transform
-					elips.transform_.CalcMiniBatchInvGradient(img_point_, ref_point_, prev_ref_point_, feature, gradient_match_point_count, gradient_batch_idx);	
-					gradient_batch_idx++;
+					COLOUR c = GetColour(i, 0, num_joints_ - 1);
+					pcl::PointCloud<pcl::PointXYZ>::Ptr segmented_home_cloud_pcd(new pcl::PointCloud<pcl::PointXYZ>); 
+					Mat2PCD(segmented_home_cloud[i], segmented_home_cloud_pcd);
+					pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> segmented_home_cloud_color(segmented_home_cloud_pcd, (int)(c.r * 255.0), (int)(c.g * 255.0), (int)(c.b * 255.0));
+					char cloud_name[20];
+					sprintf(cloud_name, "cloud_segment_%d", i);
+					if(iteration_count == 1)
+					{			
+						viewer->addPointCloud<pcl::PointXYZ>(segmented_home_cloud_pcd, segmented_home_cloud_color, cloud_name);	
+					}
+					else
+					{
+						viewer->updatePointCloud<pcl::PointXYZ>(segmented_home_cloud_pcd, segmented_home_cloud_color, cloud_name);
+					}
 				}
-			}	
-			// update weights
-			elips.transform_.UpdateWeightBatch();
-			// classify points in reference frame
-			elips.ClassifyPointsForReferenceFrame(unique_match_point_, matched_points_, motion_ratio_, maha_dist_);
-			// update ellipse by the matched points
-			elips.UpdateRefEllipse(matched_points_, motion_ratio_, maha_dist_);
+				viewer->spinOnce(10.0); // ms as unit
+			}
+			/******************** just for display ******************/
 		}
-	}
-	else
-	{
-		/*if(aim_idx % 1 == 1)
-		{*/
-			elips.ClassifyPointsForReferenceFrame(unique_match_point_, matched_points_, motion_ratio_, maha_dist_);
-
-			char key_points_dir[300];
-			sprintf(key_points_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/key_points/key_point_data_%d.bin", dir_id_, aim_idx);				
-			FileIO::WriteMatDouble(matched_points_, matched_points_.rows, matched_points_.cols, key_points_dir);
-
-			sprintf(key_points_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/key_points/motion_data_%d.bin", dir_id_, aim_idx);				
-			FileIO::WriteMatDouble(motion_ratio_, motion_ratio_.rows, motion_ratio_.cols, key_points_dir);
-
-			sprintf(key_points_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/key_points/maha_dist_%d.bin", dir_id_, aim_idx);				
-			FileIO::WriteMatDouble(maha_dist_, maha_dist_.rows, maha_dist_.cols, key_points_dir);
-
-			cv::Mat key_points_data_length = cv::Mat::zeros(1, 1, CV_64F);
-			key_points_data_length.at<double>(0, 0) = matched_points_.rows;
-			sprintf(key_points_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/key_points/data_count_%d.bin", dir_id_, aim_idx);
-			FileIO::WriteMatDouble(key_points_data_length, 1, 1, key_points_dir);
-
-			cv::Mat inv_transform = cv::Mat::zeros(3, 3, CV_64F);
-			inv_transform = elips.transform_.transform_inv();
-			sprintf(key_points_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/key_points/inv_transform_%d.bin", dir_id_, aim_idx);
-			FileIO::WriteMatDouble(inv_transform, 3, 3, key_points_dir);
-		//}
-
+		ShowLearningProgress(iteration_count);
 	}	
 }
 
-void Explorer::CopyToPrev()
-{	
-	elips_prev_key_points_ = elips_key_points_.clone();
-	elips_prev_descriptors_ = elips_descriptors_.clone();
-}
 
-
-void Explorer::Train()
-{		
+void Explorer::Test(bool single_frame, bool display, int test_idx)
+{
 	char input_dir[400];
 	char output_dir[400];	
 	int aim_idx = 0;	
 	int aim_frame_idx = 0;
-	int display_interval = 500;
-	int write_trend_interval = 5000;
-	int write_diagnosis_interval = 2500;
-	int percentage = 0; 		
-	unsigned long iteration_count = 0;		
-
-	bool append_flag = false;	
-
-	cv::Mat elips_ini = cv::Mat::zeros(5, 1, CV_64F);
-
-	//double initial_x = 300; // 218; 
-	//double initial_y = 260; // 230; 
-	//double initial_long_axis = 30; 
-	//double initial_short_axis = 20; // 22
-	//double initial_angle = -1.0 * PI / 20; // 1.0 * PI / 8.5; 
-	//double radius = 3.0;
-
-	//double initial_x = 300; // 380; // 300; // 218; 
-	//double initial_y = 193; // 220; // 260; // 230; 
-	//double initial_long_axis = 30; 
-	//double initial_short_axis = 12; 
-	//double initial_angle = -1.0 * PI / 9; // -1.0 * PI / 20; // 1.0 * PI / 8.5; 
-	//double radius = 1.0; // 2.0
-
-	
-	//double initial_x = 370; // 380; // 300; // 218; 
-	//double initial_y = 225; // 220; // 260; // 230; 
-	//double initial_long_axis = 45; 
-	//double initial_short_axis = 35; 
-	//double initial_angle = 0; // -1.0 * PI / 3; // 1.0 * PI / 8.5; 
-	//double radius = 3.0;
-
-	sprintf(input_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/input/elips_ini_%d.bin", dir_id_);
-	FileIO::ReadMatDouble(elips_ini, 5, 1, input_dir);
-
-	double initial_x = elips_ini.at<double>(0, 0); // 380; // 300; // 218; 
-	double initial_y = elips_ini.at<double>(1, 0); // 220; // 260; // 230; 
-	double initial_long_axis = elips_ini.at<double>(2, 0); 
-	double initial_short_axis = elips_ini.at<double>(3, 0); 
-	double initial_angle = elips_ini.at<double>(4, 0); // -1.0 * PI / 20; // 1.0 * PI / 8.5; 
-
-	double radius = 3.0;
-
-	max_exploration_range_ = 1.0;	
-
-	// keep the exploration in a small range...	
+	unsigned long iteration_count = 0;
+	cv::Mat target_cloud, matched_target_cloud, indices, min_dists;
 	std::mt19937 engine(rd_());		
-	cv::Mat train_target_idx = cv::Mat::zeros(num_train_data_, 1, CV_64F);		
-	cv::Mat test_target_idx = cv::Mat::zeros(num_test_data_, 1, CV_64F);		
-	cv::Mat feature = cv::Mat::zeros(dim_feature_, 1, CV_64F);		
-	cv::Mat action = cv::Mat::zeros(dim_action_, 1, CV_64F);	
-	cv::Mat cov = cv::Mat::zeros(2, 2, CV_64F);
-	cv::Mat mu = cv::Mat::zeros(2, 1, CV_64F);
-	cv::Mat improvement_avg = cv::Mat::zeros(1, 1, CV_64F);
-	// cv::Mat disp_img = cv::Mat::zeros(img_height, img_width, CV_8UC3);
-	fL* trend_array = new fL[trend_number_];
-	// objects...	
-	Loader loader(dim_action_, trend_number_, dir_id_, dir_);
-	Ellipse elips(initial_x, initial_y, initial_long_axis, initial_short_axis, initial_angle, radius);
-
-	loader.FormatWeightsForTestDirectory();
-	loader.FormatTrendDirectory();
-	// loader.FormatWeightsForDiagnosisDirectory();
-	loader.LoadProprioception(num_train_data_, num_test_data_, train_prop_, test_prop_, home_prop_, train_target_idx, test_target_idx);	
-	loader.LoadLearningRates(elips);	
-	// for tool extension experiment only...
-	loader.LoadWeightsForTest(elips.transform_, 1, dim_feature_);
-	loader.LoadEllipse(elips);
-	elips.SetRefEllipseParameters();
-	// ********************************* //
-
-	// ***** try load all key points...******** //
-	descriptors_all_.clear(); key_points_all_.clear();
-	loader.LoadAllSiftKeyPoint(descriptors_all_, key_points_all_, 0, num_train_data_ + num_test_data_); // 23248); // num_train_data_ + num_test_data_);
-	// main loop
-	for(iteration_count = 0; iteration_count < num_iteration_; iteration_count++)
-	{		
-		// aim_idx = GenerateAimIndex(engine, iteration_count);
-		aim_idx = GenerateAimIndexLinePath(engine, iteration_count);
-		aim_frame_idx = train_target_idx.at<double>(aim_idx, 0);
-
-		// loader.LoadSiftKeyPoint(descriptors_, key_points_, aim_frame_idx);					
-		if(aim_frame_idx < descriptors_all_.size())
-		{
-			descriptors_ = descriptors_all_[aim_frame_idx];
-			key_points_ = key_points_all_[aim_frame_idx];
-		}
-		else
-		{
-			std::cout << "number of descriptor matrix incorrect... exit..." << std::endl;
-			exit(0);
-		}
-
-		// act & evaluate gradient
-		if(iteration_count != 0)
-		{
-			SetFeature(feature, aim_idx, train_prop_, home_prop_);
-			action = elips.transform_.EvaluateInvTransformation(feature);
-			elips.UpdateEllipseByAction(action);  		
-			elips.GetKeyPointInEllipse(descriptors_, key_points_, elips_descriptors_, elips_key_points_, elips_distance_, 1);	
-			EvaluateGradientAndUpdate(feature, 1, aim_idx, elips, iteration_count);		
-			/*if(improvement_.rows != 0)
-				cv::reduce(improvement_, improvement_avg, 0, CV_REDUCE_AVG);*/
-		}	
-		else
-		{
-			// only for the first iteration...
-			elips.GetKeyPointInEllipse(descriptors_, key_points_, elips_descriptors_, elips_key_points_, elips_distance_, 1);
-		}		
-
-		// copy to previous		
-		elips.CopyToPrev();
-		CopyToPrev();							
-		cov = elips.ref_cov();
-		mu = elips.ref_mu();
-
-		
-		// recording
-		trend_array[0].push_back(cv::norm(elips.transform_.w_x(), cv::NORM_L2)); trend_array[1].push_back(cv::norm(elips.transform_.w_y(), cv::NORM_L2));      
-		trend_array[2].push_back(cv::norm(elips.transform_.w_phi(), cv::NORM_L2)); trend_array[3].push_back(cv::norm(elips.transform_.w_sx(), cv::NORM_L2));      
-		trend_array[4].push_back(cv::norm(elips.transform_.w_sy(), cv::NORM_L2)); 
-		trend_array[5].push_back(cov.at<double>(0, 0)); trend_array[6].push_back(cov.at<double>(0, 1));	
-		trend_array[7].push_back(cov.at<double>(1, 0)); trend_array[8].push_back(cov.at<double>(1, 1));
-		trend_array[9].push_back(mu.at<double>(0, 0)); trend_array[10].push_back(cov.at<double>(1, 0));
-		trend_array[11].push_back(aim_idx);	 // aim_idx
-		if(iteration_count % write_trend_interval == 0)
-		{			
-			append_flag = iteration_count == 0 ? 0 : 1;			
-			loader.SaveTrend(trend_array, trend_number_, append_flag);			
-			loader.SaveWeightsForTest(elips.transform_, 1, dim_feature_); // single policy is 1 dimensional
-			loader.SaveEllipse(elips);
-			for(int i = 0; i < trend_number_; i++)
-				trend_array[i].clear();
-		}
-		if(iteration_count % write_diagnosis_interval == 0)
-		{
-			loader.SaveWeightsForDiagnosis(elips.transform_, elips, 1, dim_feature_, iteration_count / write_diagnosis_interval); // single policy is 1 dimensional
-		}
-		// display
-		if(iteration_count % display_interval == 1)
-		{
-			percentage = iteration_count * 100.0 / num_iteration_; // how much finished...
-			std::cout << "training iteration: " << iteration_count << std::endl;
-			std::cout << "x shift: " << action.at<double>(0, 0) << " " << "y shift: " << action.at<double>(1, 0) << std::endl;
-			std::cout << "rotation: " << action.at<double>(2, 0) << " " << "x scaling: " << action.at<double>(3, 0) << " " << "y scaling: " << action.at<double>(4, 0) << std::endl;			
-			std::cout << "aim index: " << aim_idx << std::endl; std::cout << "avg cost: " << avg_cost_ << std::endl; std::cout << "completed: " << percentage << "%" << std::endl;
-		}				
-	}			
-	loader.SaveTrend(trend_array, trend_number_, append_flag);  
-}
-
-void Explorer::Test(int display_flag, int single_frame_flag, int start_idx, int end_idx, int test_idx, int test_flag, int record_img_flag)
-{
-	char input_dir[400];		
-	char output_dir[400];		
-	int aim_idx = 0;	
-	int aim_frame_idx = 0;
-	int img_height = 480;
-	int img_width = 640;
-	int update_gradient_flag = 0;
-	cv::Mat elips_ini = cv::Mat::zeros(5, 1, CV_64F);
-	//double initial_x = 300; // 218; 
-	//double initial_y = 260; // 230; 
-	//double initial_long_axis = 30; 
-	//double initial_short_axis = 20; 
-	//double initial_angle = -1.0 * PI / 20; // 1.0 * PI / 8.5; 
-	//double radius = 3.0;
-
-	//double initial_x = 300; // 380; // 300; // 218; 
-	//double initial_y = 193; // 220; // 260; // 230; 
-	//double initial_long_axis = 30; 
-	//double initial_short_axis = 12; 
-	//double initial_angle = -1.0 * PI / 9; // -1.0 * PI / 20; // 1.0 * PI / 8.5; 
-	//double radius = 1.0; // 2.0;
-
-	//double initial_x = 370; // 380; // 300; // 218; 
-	//double initial_y = 225; // 220; // 260; // 230; 
-	//double initial_long_axis = 45; 
-	//double initial_short_axis = 35; 
-	//double initial_angle = 0; // -1.0 * PI / 3; // 1.0 * PI / 8.5; 
-	//double radius = 3.0;
-
-	sprintf(input_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/input/elips_ini_%d.bin", dir_id_);
-	FileIO::ReadMatDouble(elips_ini, 5, 1, input_dir);
-
-	double initial_x = elips_ini.at<double>(0, 0); // 380; // 300; // 218; 
-	double initial_y = elips_ini.at<double>(1, 0); // 220; // 260; // 230; 
-	double initial_long_axis = elips_ini.at<double>(2, 0); 
-	double initial_short_axis = elips_ini.at<double>(3, 0); 
-	double initial_angle = elips_ini.at<double>(4, 0); // -1.0 * PI / 20; // 1.0 * PI / 8.5; 
-	double radius = 3.0;
-
-	//double initial_x = 350; // 380; // 300; // 218; 
-	//double initial_y = 160; // 220; // 260; // 230; 
-	//double initial_long_axis = 50; 
-	//double initial_short_axis = 30; 
-	//double initial_angle = -1.0 * PI / 9; // -1.0 * PI / 20; // 1.0 * PI / 8.5; 
-	//double radius = 3.0;
-
-	cv::Mat train_target_idx = cv::Mat::zeros(num_train_data_, 1, CV_64F);	
-	cv::Mat test_target_idx = cv::Mat::zeros(num_test_data_, 1, CV_64F);
-	cv::Mat feature = cv::Mat::zeros(dim_feature_, 1, CV_64F);
-	cv::Mat action = cv::Mat::zeros(dim_action_, 1, CV_64F);
-	cv::Mat disp_img = cv::Mat::zeros(img_height, img_width, CV_8UC3);
-
-	Loader loader(dim_action_, trend_number_, dir_id_, dir_);
-	Ellipse elips(initial_x, initial_y, initial_long_axis, initial_short_axis, initial_angle, radius);
-
-	loader.FormatWeightsForTestDirectory();
-	loader.FormatTrendDirectory();
-	loader.LoadProprioception(num_train_data_, num_test_data_, train_prop_, test_prop_, home_prop_, train_target_idx, test_target_idx);
-	loader.LoadWeightsForTest(elips.transform_, 1, dim_feature_);
-	loader.LoadEllipse(elips);
-	elips.SetRefEllipseParameters();
-
-
-	if(single_frame_flag == 1)
+	int start_idx = 0;
+	int end_idx = train_data_size_;
+	if(single_frame)
 	{
 		start_idx = test_idx;
 		end_idx = test_idx + 1;
 	}
-	/*if(end_idx > num_train_data_)
-	{
-		std::cout << "invalid test index... exiting..." << std::endl;
-		exit(0);
-	}*/
-	// base template for compare...
-	aim_idx = 0;
-
-	if(test_flag)
-	{
-		aim_frame_idx = test_target_idx.at<double>(aim_idx, 0);
-		SetFeature(feature, aim_idx, test_prop_, home_prop_);		
+	Loader loader(num_weights_, num_joints_, dim_feature_, num_trend_, id_, data_set_);
+	loader.FormatWeightsForTestDirectory();
+	loader.LoadProprioception(train_data_size_, test_data_size_, train_prop_, test_prop_, home_prop_, train_target_idx_, test_target_idx_, joint_idx_);	
+	loader.LoadWeightsForTest(transform_);
+	LoadHomeCloud(loader);
+	cv::Mat feature_zero = cv::Mat::zeros(dim_feature_, 1, CV_64F);	
+	SetFeature(feature_home_, feature_zero, num_joints_, home_prop_);
+	boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer;
+	if(display)
+	{		
+		viewer = boost::shared_ptr<pcl::visualization::PCLVisualizer>(new pcl::visualization::PCLVisualizer("cloud Viewer"));
+		viewer->setBackgroundColor(0, 0, 0);	
+		viewer->initCameraParameters();	
 	}
-	else
-	{
-		aim_frame_idx = train_target_idx.at<double>(aim_idx, 0);
-		SetFeature(feature, aim_idx, train_prop_, home_prop_);		
-	}
-
-	loader.LoadSiftKeyPoint(descriptors_, key_points_, aim_frame_idx);
-	action = elips.transform_.EvaluateInvTransformation(feature);
-	elips.UpdateEllipseByAction(action);  
-	elips.GetKeyPointInEllipse(descriptors_, key_points_, elips_descriptors_, elips_key_points_, elips_distance_, 1);
-	EvaluateGradientAndUpdate(feature, update_gradient_flag, aim_idx, elips, 0);			
-	elips.CopyToPrev();
-	CopyToPrev();	
-
 	for(aim_idx = start_idx; aim_idx < end_idx; aim_idx++)
 	{
-		// load key points		
-		if(test_flag)
+		aim_frame_idx = train_target_idx_.at<double>(aim_idx, 0);
+		loader.LoadBinaryPointCloud(cloud_, aim_frame_idx);
+		curr_prop_ = train_prop_.rowRange(aim_idx, aim_idx + 1);
+		SetFeature(feature_, feature_home_, num_joints_, curr_prop_);
+		transform_.CalcTransformation(feature_);
+		transform_.TransformCloud(home_cloud_, transform_.get_transform(), predicted_cloud_); // need to investigate home cloud issue
+		if(display)
 		{
-			aim_frame_idx = test_target_idx.at<double>(aim_idx, 0);
-			SetFeature(feature, aim_idx, test_prop_, home_prop_);		
-		}
-		else
-		{
-			aim_frame_idx = train_target_idx.at<double>(aim_idx, 0);
-			SetFeature(feature, aim_idx, train_prop_, home_prop_);		
-		}
-
-		loader.LoadSiftKeyPoint(descriptors_, key_points_, aim_frame_idx);		
-		// act & evaluate gradient				
-		action = elips.transform_.EvaluateInvTransformation(feature);
-		elips.UpdateEllipseByAction(action);  
-		elips.GetKeyPointInEllipse(descriptors_, key_points_, elips_descriptors_, elips_key_points_, elips_distance_, 1);
-		EvaluateGradientAndUpdate(feature, update_gradient_flag, aim_idx, elips, 0);			
-		if(display_flag == 1)
-		{
-			// display...			
-			loader.LoadImage(aim_frame_idx, disp_img);
-			elips.DrawEllipse(disp_img, 1.0); // draw ellipse
-			cv::Mat transform_inv = elips.transform_.transform_inv();
-			cv::Mat transform = cv::Mat::zeros(transform_inv.rows, transform_inv.cols, CV_64F);
-			cv::invert(transform_inv, transform);
-			// display key points...
-			// not displaying the filtered key points... just all the unique matched key points..
-			// reason: we can potentially find out whether the matched points' distance has been altered...
-			// and examine what is the proper threshold for the classification
-			//for(int i = 0; i < unique_match_point_.size(); i++)
-			//{		
-			//	prev_ref_point_.at<double>(0, 0) = unique_match_point_[i].at<double>(0, 7); prev_ref_point_.at<double>(1, 0) = unique_match_point_[i].at<double>(0, 8);				
-			//	prev_ref_point_.at<double>(2, 0) = 1.0;
-			//	prev_img_point_ = transform * prev_ref_point_;
-			//	ref_point_.at<double>(0, 0) = unique_match_point_[i].at<double>(0, 9); ref_point_.at<double>(1, 0) = unique_match_point_[i].at<double>(0, 10);				
-			//	ref_point_.at<double>(2, 0) = 1.0;
-			//	img_point_ = transform * ref_point_;								
-			//	cv::circle(disp_img, cv::Point2f(prev_img_point_.at<double>(0, 0), prev_img_point_.at<double>(1, 0)), 2, cv::Scalar(200, 0, 0));
-			//	cv::circle(disp_img, cv::Point2f(img_point_.at<double>(0, 0), img_point_.at<double>(1, 0)), 2, cv::Scalar(0, 200, 0));
-			//	line(disp_img, cv::Point2f(img_point_.at<double>(0, 0), img_point_.at<double>(1, 0)), cv::Point2f(prev_img_point_.at<double>(0, 0), prev_img_point_.at<double>(1, 0)), cv::Scalar(0, 0, 200));
-			//}		
-			//// /****************** for debugging *********************/
-			//cv::Mat prev_key_points_ref_debug = cv::Mat::zeros(unique_match_point_.size(), 2, CV_64F);
-			//cv::Mat curr_key_points_ref_debug = cv::Mat::zeros(unique_match_point_.size(), 2, CV_64F);
-			//for(int i = 0; i < unique_match_point_.size(); i++)
-			//{
-			//	prev_key_points_ref_debug.at<double>(i, 0) = unique_match_point_[i].at<double>(0, 7);
-			//	prev_key_points_ref_debug.at<double>(i, 1) = unique_match_point_[i].at<double>(0, 8);
-			//	curr_key_points_ref_debug.at<double>(i, 0) = unique_match_point_[i].at<double>(0, 9);
-			//	curr_key_points_ref_debug.at<double>(i, 1) = unique_match_point_[i].at<double>(0, 10);
-			//}
-			//sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/matches_debug/prev_key_points_%d.bin", dir_id_, aim_idx);
-			//FileIO::WriteMatDouble(prev_key_points_ref_debug, unique_match_point_.size(), 2, output_dir);
-			//sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/matches_debug/curr_key_points_%d.bin", dir_id_, aim_idx);
-			//FileIO::WriteMatDouble(curr_key_points_ref_debug, unique_match_point_.size(), 2, output_dir);
-
-
-			for(int i = 0; i < matched_points_.rows; i++)
-			{		
-				
-				ref_point_.at<double>(0, 0) = matched_points_.at<double>(i, 0); ref_point_.at<double>(1, 0) = matched_points_.at<double>(i, 1);
-				ref_point_.at<double>(2, 0) = 1.0;
-				img_point_ = transform * ref_point_;
-				// cv::circle(disp_img, cv::Point2f(prev_img_point_.at<double>(0, 0), prev_img_point_.at<double>(1, 0)), 2, cv::Scalar(200, 0, 0));
-				// cv::circle(disp_img, cv::Point2f(img_point_.at<double>(0, 0), img_point_.at<double>(1, 0)), 2, cv::Scalar(0, 200, 0));
-				// line(disp_img, cv::Point2f(img_point_.at<double>(0, 0), img_point_.at<double>(1, 0)), cv::Point2f(prev_img_point_.at<double>(0, 0), prev_img_point_.at<double>(1, 0)), cv::Scalar(0, 0, 200));
-			}
-
-			if(record_img_flag)
-			{
-				sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/images/%d.pgm", dir_id_, aim_idx);
-				imwrite(output_dir, disp_img);
-				if(aim_idx % 50 == 0)
-					std::cout << "tested frame: " << aim_idx << std::endl;
+			pcl::PointCloud<pcl::PointXYZ>::Ptr target_cloud_pcd(new pcl::PointCloud<pcl::PointXYZ>);
+			pcl::PointCloud<pcl::PointXYZ>::Ptr predicted_cloud_pcd(new pcl::PointCloud<pcl::PointXYZ>);
+			// currently only work for one joint...
+			Mat2PCD(cloud_, target_cloud_pcd);
+			Mat2PCD(predicted_cloud_[0], predicted_cloud_pcd);
+			pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> target_cloud_color(target_cloud_pcd, 0, 0, 255);			
+			pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> predicted_cloud_color(predicted_cloud_pcd, 0, 255, 0);
+			if(aim_idx - start_idx == 0)
+			{			
+				viewer->addPointCloud<pcl::PointXYZ>(target_cloud_pcd, target_cloud_color, "target_cloud");			
+				viewer->addPointCloud<pcl::PointXYZ>(predicted_cloud_pcd, predicted_cloud_color, "transformed_cloud");									
 			}
 			else
 			{
-				std::cout << aim_frame_idx << std::endl;
-				std::cout << "x: " << action.at<double>(0, 0) << " y: " << action.at<double>(1, 0) << " a: " <<  action.at<double>(2, 0) << " lx: " << action.at<double>(3, 0) << " sx: " << action.at<double>(4, 0) << std::endl;
-				std::cout << "aim_idx: " << aim_idx << std::endl;			
-				cv::imshow("explorer", disp_img); // show ellipse
-				cv::waitKey(0);
+				viewer->updatePointCloud<pcl::PointXYZ>(target_cloud_pcd, target_cloud_color, "target_cloud");
+				viewer->updatePointCloud<pcl::PointXYZ>(predicted_cloud_pcd, predicted_cloud_color, "transformed_cloud");
+			}
+			if(end_idx - start_idx == 1)
+				viewer->spin();
+			else
+				viewer->spinOnce(50);
+		}
+	}
+}
+
+// build the neighbor graph of the home point cloud by radius search...
+void Explorer::BuildModelGraph(const cv::Mat& home_cloud, int num_joints, cv::Mat& home_cloud_neighbor_indices, cv::Mat& home_cloud_neighbor_dists, double neighborhood_range, int max_num_neighbor)
+{
+	cv::Mat home_cloud_f; 
+	home_cloud.convertTo(home_cloud_f, CV_32F);
+	// initialize home cloud related matrices
+	home_cloud_neighbor_indices = cv::Mat::zeros(home_cloud.rows, max_num_neighbor, CV_32S) - 1; // all initialized to -1, which is the marker of non-used cells...
+	home_cloud_neighbor_dists = cv::Mat::zeros(home_cloud.rows, max_num_neighbor, CV_32F) - 1; // all initialized to -1, which is the marker
+	cv::flann::Index home_cloud_kd_trees(home_cloud_f, cv::flann::KDTreeIndexParams(4), cvflann::FLANN_DIST_EUCLIDEAN); // build kd tree 
+	for(int i = 0; i < home_cloud.rows; i++)
+	{
+		// the radius search thing only works for one row at a time...
+		cv::Mat query_point = home_cloud_f.rowRange(i, i + 1);
+		cv::Mat curr_neighbor_indices = cv::Mat::zeros(1, max_num_neighbor + 1, CV_32S) - 1;
+		cv::Mat curr_neighbor_dists = cv::Mat::zeros(1, max_num_neighbor + 1, CV_32F) - 1;
+		home_cloud_kd_trees.radiusSearch(query_point, curr_neighbor_indices, curr_neighbor_dists, neighborhood_range * neighborhood_range, max_num_neighbor + 1, cv::flann::SearchParams(64)); // kd tree search, index indices the matches in query cloud, need to exclude self in the end
+		curr_neighbor_indices.colRange(1, max_num_neighbor + 1).copyTo(home_cloud_neighbor_indices.rowRange(i, i + 1));
+		curr_neighbor_dists.colRange(1, max_num_neighbor + 1).copyTo(home_cloud_neighbor_dists.rowRange(i, i + 1));
+	}
+	/*char output_dir[40];
+	sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Solutions/unified_framework/output/home_cloud_indices.bin");
+	FileIO::WriteMatInt(home_cloud_neighbor_indices, home_cloud.rows, max_num_neighbor, output_dir);
+	sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Solutions/unified_framework/output/home_cloud_min_dists.bin");
+	FileIO::WriteMatFloat(home_cloud_neighbor_dists, home_cloud.rows, max_num_neighbor, output_dir);*/
+}
+
+// todo: model class, refactoring later
+void Explorer::InitializeModelLabel(
+	const std::vector<cv::Mat>& min_dists, 
+	int num_joints, 
+	double sigma,
+	cv::Mat& home_cloud_weight_label,
+	cv::Mat& weight_label_probabilities)
+{
+	// home_cloud_neighbor need to be initialized...
+	int home_cloud_size = home_cloud_weight_label.rows;
+	double min_value = 0;
+	double max_value = 0;
+	// update according to maximum likelihood only, without neighborhood constraint...
+	cv::Mat curr_point_min_dists = cv::Mat::zeros(1, num_joints, CV_64F);
+	cv::Mat curr_probabilities = cv::Mat::zeros(1, num_joints, CV_64F);
+	cv::Point min_location, max_location;
+	min_location.x = 0; min_location.y = 0; max_location.x = 0; max_location.y = 0;
+	for(int i = 0; i < home_cloud_size; i++)
+    {
+		for(int j = 0; j < num_joints; j++)
+		{
+			curr_point_min_dists.at<double>(0, j) = min_dists[j].at<float>(i, 0);
+			curr_probabilities.at<double>(0, j) = exp(-0.5 * min_dists[j].at<float>(i, 0) / (sigma * sigma));
+		}
+		cv::minMaxLoc(curr_point_min_dists, &min_value, &max_value, &min_location, &max_location);
+		home_cloud_weight_label.at<double>(i, min_location.x) = 1;
+		// normalize and convert dist to probabilities, just let it be the initial value...
+		cv::normalize(curr_probabilities, weight_label_probabilities.rowRange(i, i + 1), 1.0, 0, cv::NORM_L1);
+	}
+	// just record the initial probability
+	char output_dir[40];
+	sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Solutions/unified_framework/output/initial_probabilities.bin");
+	FileIO::WriteMatDouble(weight_label_probabilities, weight_label_probabilities.rows, weight_label_probabilities.cols, output_dir);
+}
+
+// iterated conditional convergence algorithm, beta: the weight of neighborhood, sigam: the standard deviation of error gaussian...
+void Explorer::IteratedConditionalModes(
+	const cv::Mat& home_cloud_neighbor_indices, 
+	const std::vector<cv::Mat>& min_dists, 
+	cv::Mat& home_cloud_weight_label, 
+	cv::Mat& potential, 
+	int num_joints, 
+	int icm_iterations, 
+	int max_num_neighbors, 
+	double beta, 
+	double sigma) 
+{
+	int cloud_size = home_cloud_weight_label.rows;
+	double min_value = 0;
+	double max_value = 0;
+	cv::Point min_location, max_location;
+	cv::Mat tmp_mat_1, tmp_mat_2, tmp_zeros;
+	cv::Mat dist_likelihood = cv::Mat::zeros(1, num_joints, CV_64F);
+	min_location.x = 0; min_location.y = 0; max_location.x = 0; max_location.y = 0;
+	cv::Mat new_home_cloud_weight_label; 
+	for(int iter_idx = 0; iter_idx < icm_iterations; iter_idx++)
+	{
+		new_home_cloud_weight_label = cv::Mat::zeros(home_cloud_weight_label.rows, home_cloud_weight_label.cols, CV_64F);
+		for(int point_idx = 0; point_idx < cloud_size; point_idx++)
+		{
+			cv::Mat label_count = cv::Mat::zeros(1, num_joints, CV_64F);
+			// exp(beta * sum_label(l)) / sum(exp(beta * sum_label(k)))
+			for(int neighbor_idx = 0; neighbor_idx < max_num_neighbors; neighbor_idx++)
+			{
+				int neighbor_point_idx = home_cloud_neighbor_indices.at<int>(point_idx, neighbor_idx);
+				if(neighbor_point_idx != -1)
+				{
+					label_count = label_count + home_cloud_weight_label.rowRange(neighbor_point_idx, neighbor_point_idx + 1); 
+				}
+				else
+				{
+					break;
+				}
+			}
+			label_count = label_count * beta;
+			cv::exp(label_count, tmp_mat_1);
+			cv::reduce(tmp_mat_1, tmp_mat_2, 1, CV_REDUCE_SUM); // row-wise reduce
+			// neighborhood potential
+			potential.rowRange(point_idx, point_idx + 1) = tmp_mat_1 / cv::repeat(tmp_mat_2, label_count.rows, label_count.cols);
+			// error potential
+			for(int joint_idx = 0; joint_idx < num_joints; joint_idx++)
+			{
+				// gaussian... zero mean, min dist is already squared...
+				dist_likelihood.at<double>(0, joint_idx) = exp(-0.5 * min_dists[joint_idx].at<float>(point_idx, 0) / (sigma * sigma));
+			}
+			// multiply together...
+			potential.rowRange(point_idx, point_idx + 1) = potential.rowRange(point_idx, point_idx + 1).mul(dist_likelihood);
+			cv::minMaxLoc(potential.rowRange(point_idx, point_idx + 1), &min_value, &max_value, &min_location, &max_location);
+			tmp_zeros = cv::Mat::zeros(1, num_joints, CV_64F);
+			tmp_zeros.copyTo(new_home_cloud_weight_label.rowRange(point_idx, point_idx + 1));
+			new_home_cloud_weight_label.at<double>(point_idx, max_location.x) = 1;
+		}
+		new_home_cloud_weight_label.copyTo(home_cloud_weight_label);
+	}
+}
+
+void Explorer::LoadHomeCloud(Loader& loader)
+{
+	int home_frame_idx = train_target_idx_.at<double>(0, 0);
+	for(int i = 0; i < num_joints_; i++)
+	{
+		loader.LoadBinaryPointCloud(home_cloud_[i], home_frame_idx);
+	}
+}
+
+void Explorer::Segment(std::vector<cv::Mat>& segmented_target_cloud, 
+					   std::vector<cv::Mat>& segmented_home_cloud, 
+					   std::vector<cv::Mat>& segmented_prediction_cloud, 
+					   const cv::Mat& home_cloud_weight_label, 
+					   const cv::Mat& target_cloud, 
+					   const cv::Mat& home_cloud, 
+					   const std::vector<cv::Mat>& prediction_cloud, 
+					   const std::vector<cv::Mat>& indices, 
+					   int num_joints)
+{
+	// shuffle the cloud to make it match with the template
+	double min_value = 0;
+	double max_value = 0;
+	cv::Point min_location, max_location;
+	cv::Mat count = cv::Mat::zeros(num_joints, 1, CV_32S);
+	for(int i = 0; i < num_joints; i++)
+	{
+		segmented_target_cloud[i] = cv::Mat::zeros(indices[0].rows, target_cloud.cols, CV_64F);
+		segmented_home_cloud[i] = cv::Mat::zeros(indices[0].rows, target_cloud.cols, CV_64F);
+		segmented_prediction_cloud[i] = cv::Mat::zeros(indices[0].rows, target_cloud.cols, CV_64F);
+	}
+	for(int p = 0; p < indices[0].rows; p++)
+	{
+		
+		cv::minMaxLoc(home_cloud_weight_label.rowRange(p, p + 1), &min_value, &max_value, &min_location, &max_location);
+		int label_idx = max_location.x;
+		int curr_idx = indices[label_idx].at<int>(p, 0);
+		int curr_count = count.at<int>(label_idx, 0);
+		target_cloud.rowRange(curr_idx, curr_idx + 1).copyTo(segmented_target_cloud[label_idx].rowRange(curr_count, curr_count + 1));
+		prediction_cloud[label_idx].rowRange(p, p + 1).copyTo(segmented_prediction_cloud[label_idx].rowRange(curr_count, curr_count + 1));
+		home_cloud.rowRange(p, p + 1).copyTo(segmented_home_cloud[label_idx].rowRange(curr_count, curr_count + 1));	
+		count.at<int>(label_idx, 0) = count.at<int>(label_idx, 0) + 1;
+	}
+	for(int i = 0; i < num_joints; i++)
+	{
+		segmented_target_cloud[i] = segmented_target_cloud[i].rowRange(0, count.at<int>(i, 0));
+		segmented_home_cloud[i] = segmented_home_cloud[i].rowRange(0, count.at<int>(i, 0));
+		segmented_prediction_cloud[i] = segmented_prediction_cloud[i].rowRange(0, count.at<int>(i, 0));
+	}
+}
+
+void Explorer::ShowLearningProgress(int iteration_count)
+{
+	if(iteration_count % 20 == 1)			
+	{
+		std::cout << "iteration: " << iteration_count << std::endl;			
+	}
+}
+
+void Explorer::RecordData(Loader& loader, std::vector<std::vector<double>>& trend_array, int aim_idx, int iteration_count, int record_trend_interval, int record_diagnosis_interval)
+{
+	int trend_count = 0;
+	for(int i = 0; i < num_joints_; i++)
+	{
+		for(int j = 0; j < num_weights_; j++)
+		{
+			trend_count = i * num_weights_ + j;
+			trend_array[trend_count].push_back(cv::norm(transform_.get_w(i).rowRange(j, j + 1), cv::NORM_L2));
+		}
+	}
+	trend_array[num_joints_ * num_weights_].push_back(aim_idx);
+	// record trend
+	if(iteration_count % record_trend_interval == 1)
+	{			
+		int append_flag = iteration_count == 1 ? 0 : 1;			
+		loader.SaveTrend(trend_array, num_trend_, append_flag);								
+		for(int i = 0; i < num_trend_; i++)
+			trend_array[i].clear();
+		// record testing weight
+		loader.SaveWeightsForTest(transform_);
+	}
+	// record diagnosis
+	if(iteration_count % record_diagnosis_interval == 1)
+	{
+		loader.SaveWeightsForDiagnosis(transform_, iteration_count / record_diagnosis_interval);	
+	}
+}
+
+void Explorer::SetFeature(cv::Mat& feature, cv::Mat& feature_home, int num_joints, const cv::Mat& curr_prop)
+{
+	int sinusoidal_dim = 3;
+	int feature_dim = feature.rows;
+	cv::Mat count = cv::Mat::zeros(num_joints, 1, CV_64F);
+	cv::Mat curr_prop_sinusoidal = cv::Mat::zeros(num_joints, sinusoidal_dim, CV_64F);
+	// set the sinusoidal value
+	for(int i = 0; i < num_joints; i++)
+	{
+		curr_prop_sinusoidal.at<double>(i, 0) = 1;
+		curr_prop_sinusoidal.at<double>(i, 1) = sin(curr_prop.at<double>(0, i) / 180.0 * PI);
+		curr_prop_sinusoidal.at<double>(i, 2) = cos(curr_prop.at<double>(0, i) / 180.0 * PI);
+	}
+	
+	for(int idx = 0; idx <= feature_dim; idx++)
+	{
+		if(idx != 0)
+		{
+			feature.at<double>(idx - 1, 0) = 1;
+			int factor = sinusoidal_dim;
+			for(int joint_idx = num_joints - 1; joint_idx >= 0; joint_idx--)
+			{
+				if(joint_idx == num_joints - 1)
+				{
+					count.at<double>(joint_idx, 0) = idx % factor;	
+				}
+				else
+				{
+					count.at<double>(joint_idx, 0) = idx / factor % sinusoidal_dim;	
+					factor *= sinusoidal_dim;
+				}
+				feature.at<double>(idx - 1, 0) *= curr_prop_sinusoidal.at<double>(joint_idx, count.at<double>(joint_idx, 0));	
 			}
 		}
-		else
-		{
-			if(aim_idx % 10 == 0)
-				std::cout << "tested frame: " << aim_idx << std::endl;
-		}
-
-		// copy to previous		
-		elips.CopyToPrev();
-		CopyToPrev();							
 		
-	}				
-	std::cout << "test finished..." << std::endl;	
+	}
+	feature = feature - feature_home;
 }
 
-
-
-
-void Explorer::PlotDiagnosis(int test_idx)
+int Explorer::GenerateAimIndex(std::mt19937& engine, cv::flann::Index& kd_trees, std::vector<int>& path, int iteration_count, const cv::Mat& scale)
 {
-	char input_dir[400];		
-	char output_dir[400];		
-	int aim_idx = 0;	
-	int aim_frame_idx = 0;
-	int home_frame_idx = 0;
-	int img_height = 480;
-	int img_width = 640;
-	int update_gradient_flag = 0;
-	cv::Mat elips_ini = cv::Mat::zeros(5, 1, CV_64F);
-	//double initial_x = 300; // 380; // 300; // 218; 
-	//double initial_y = 193; // 220; // 260; // 230; 
-	//double initial_long_axis = 30; 
-	//double initial_short_axis = 12; 
-	//double initial_angle = -1.0 * PI / 9; // -1.0 * PI / 20; // 1.0 * PI / 8.5; 
-	//double radius = 1.0; // 2.0;
-
-	//double initial_x = 370; // 380; // 300; // 218; 
-	//double initial_y = 225; // 220; // 260; // 230; 
-	//double initial_long_axis = 45; 
-	//double initial_short_axis = 35; 
-	//double initial_angle = 0; // -1.0 * PI / 3; // 1.0 * PI / 8.5; 
-	//double radius = 3.0;
-
-	sprintf(input_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/input/elips_ini_%d.bin", dir_id_);
-	FileIO::ReadMatDouble(elips_ini, 5, 1, input_dir);
-
-	double initial_x = elips_ini.at<double>(0, 0); // 380; // 300; // 218; 
-	double initial_y = elips_ini.at<double>(1, 0); // 220; // 260; // 230; 
-	double initial_long_axis = elips_ini.at<double>(2, 0); 
-	double initial_short_axis = elips_ini.at<double>(3, 0); 
-	double initial_angle = elips_ini.at<double>(4, 0); // -1.0 * PI / 20; // 1.0 * PI / 8.5; 
-	double radius = 3.0;
-
-	//double initial_x = 350; // 380; // 300; // 218; 
-	//double initial_y = 160; // 220; // 260; // 230; 
-	//double initial_long_axis = 40; 
-	//double initial_short_axis = 40; 
-	//double initial_angle = 0; // -1.0 * PI / 20; // 1.0 * PI / 8.5; 
-	//double radius = 2.0;
-
-	cv::Mat train_target_idx = cv::Mat::zeros(num_train_data_, 1, CV_64F);	
-	cv::Mat test_target_idx = cv::Mat::zeros(num_test_data_, 1, CV_64F);
-	cv::Mat feature = cv::Mat::zeros(dim_feature_, 1, CV_64F);
-	cv::Mat action = cv::Mat::zeros(dim_action_, 1, CV_64F);
-	cv::Mat disp_img = cv::Mat::zeros(img_height, img_width, CV_8UC3);
-	cv::Mat home_img = cv::Mat::zeros(img_height, img_width, CV_8UC3);
-	cv::Mat transform_inv = cv::Mat::zeros(3, 3, CV_64F);
-
-	Loader loader(dim_action_, trend_number_, dir_id_, dir_);
-	Ellipse elips(initial_x, initial_y, initial_long_axis, initial_short_axis, initial_angle, radius);
-
-	loader.FormatWeightsForTestDirectory();
-	loader.FormatTrendDirectory();
-	loader.LoadProprioception(num_train_data_, num_test_data_, train_prop_, test_prop_, home_prop_, train_target_idx, test_target_idx);
-
-	aim_idx = test_idx;	
-
-	if(aim_idx > num_train_data_)
-	{
-		std::cout << "invalid test index... exiting..." << std::endl;
-		exit(0);
-	}
-
-	aim_frame_idx = train_target_idx.at<double>(aim_idx, 0);
-	home_frame_idx = train_target_idx.at<double>(0, 0);
-	loader.LoadImage(aim_frame_idx, disp_img);
-	// loader.LoadImage(home_frame_idx, home_img);
-	// cv::addWeighted(disp_img, 0.0, home_img, 1.0, 0.0, disp_img);
-
-	int num_elips = 5;
-	float diagnosis_idx[5] = {0, 6, 11, 12, 20};
-	for(int i = 0; i < num_elips; i++)
-	{
-		loader.LoadWeightsForDiagnosis(elips.transform_, elips, 1, dim_feature_, diagnosis_idx[i]);
-		elips.SetRefEllipseParameters();
-		
-		SetFeature(feature, aim_idx, train_prop_, home_prop_);		
-		// loader.LoadSiftKeyPoint(descriptors_, key_points_, aim_frame_idx);
-		action = elips.transform_.EvaluateInvTransformation(feature);
-		elips.UpdateEllipseByAction(action);  
-		if(i == 0 && test_idx == 0)
-			transform_inv = elips.transform_.transform_inv();
-		// elips.GetKeyPointInEllipse(descriptors_, key_points_, elips_descriptors_, elips_key_points_, elips_distance_, 1);
-		// EvaluateGradientAndUpdate(feature, update_gradient_flag, aim_idx, elips, 0);			
-		elips.CopyToPrev();
-		CopyToPrev();			
-		COLOUR c = GetColour(num_elips - i, 1, num_elips);		
-		// if(i == 0)
-		elips.DrawEllipse(disp_img, 1.0, c); // draw ellipse				
-	}
-	sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/home_transform_inv.bin", dir_id_);
-	FileIO::WriteMatDouble(transform_inv, 3, 3, output_dir);
-
-	cv::imshow("explorer", disp_img); // show ellipse
-	cv::waitKey(0);
-	
-	std::cout << "diagnosis finished..." << std::endl;	
-}
-
-void Explorer::PlotTransformationGrid()
-{
-	char input_dir[400];		
-	char output_dir[400];		
-	int aim_idx = 0;	
-	int aim_frame_idx = 0;
-	int home_frame_idx = 0;
-	int img_height = 480;
-	int img_width = 640;
-	int update_gradient_flag = 0;
-	int kernel_dim = 3;
-	int grid_number = 3;
-	int curr_pos = 0;
-	double current_data = 1.0;
-	double* p_current_data = &current_data;
-	fL kernel_list;
-	cv::Mat elips_ini = cv::Mat::zeros(5, 1, CV_64F);
-
-	//double initial_x = 300; // 380; // 300; // 218; 
-	//double initial_y = 193; // 220; // 260; // 230; 
-	//double initial_long_axis = 30; 
-	//double initial_short_axis = 12; 
-	//double initial_angle = -1.0 * PI / 9; // -1.0 * PI / 20; // 1.0 * PI / 8.5; 
-	//double radius = 1.0; // 2.0;
-
-	//double initial_x = 370; // 380; // 300; // 218; 
-	//double initial_y = 225; // 220; // 260; // 230; 
-	//double initial_long_axis = 45; 
-	//double initial_short_axis = 35; 
-	//double initial_angle = 0; // -1.0 * PI / 3; // 1.0 * PI / 8.5; 
-	//double radius = 3.0;
-
-	sprintf(input_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/input/elips_ini_%d.bin", dir_id_);
-	FileIO::ReadMatDouble(elips_ini, 5, 1, input_dir);
-
-	double initial_x = elips_ini.at<double>(0, 0); // 380; // 300; // 218; 
-	double initial_y = elips_ini.at<double>(1, 0); // 220; // 260; // 230; 
-	double initial_long_axis = elips_ini.at<double>(2, 0); 
-	double initial_short_axis = elips_ini.at<double>(3, 0); 
-	double initial_angle = elips_ini.at<double>(4, 0); // -1.0 * PI / 20; // 1.0 * PI / 8.5; 
-	double radius = 3.0;
-
-	cv::Mat train_target_idx = cv::Mat::zeros(num_train_data_, 1, CV_64F);	
-	cv::Mat test_target_idx = cv::Mat::zeros(num_test_data_, 1, CV_64F);
-	cv::Mat feature = cv::Mat::zeros(dim_feature_, 1, CV_64F);
-	cv::Mat action = cv::Mat::zeros(dim_action_, 1, CV_64F);
-	cv::Mat grid_prop = cv::Mat::zeros(grid_number * grid_number, 2, CV_64F);
-	cv::Mat grid_mu = cv::Mat::zeros(grid_number * grid_number, 2, CV_64F);
-	cv::Mat disp_img = cv::Mat::ones(img_height, img_width, CV_8UC3);
-	
-	for(int i = 0; i < 480; i++)
-	{
-		for(int j = 0; j < 640; j++)
+	int aim_idx = 0;
+	double current_range = 0;
+	double max_speed = 4.0; // 0.6 * scale.at<double>(0, 0); // 0.4 * scale
+	double path_length = 0;
+	int num_frame_path = 0;
+	if(path.size() == 0)
+	{		
+        // planar exploration range, starting from the center, range is 0 to 1
+		current_range = ini_exploration_range_ + (max_exploration_range_ - ini_exploration_range_) * iteration_count / expand_iteration_;	
+		current_range = current_range > max_exploration_range_ ? max_exploration_range_ : current_range;
+		for(int i = 0; i < num_joints_; i++)
 		{
-			disp_img.at<cv::Vec3b>(i, j)[0] *= 1;
-			disp_img.at<cv::Vec3b>(i, j)[1] *= 255;
-			disp_img.at<cv::Vec3b>(i, j)[2] *= 255;
+			std::uniform_real_distribution<double> uniform(scale.at<double>(i, 0) * current_range + home_prop_.at<double>(0, i), scale.at<double>(i, 1) * current_range + home_prop_.at<double>(0, i));
+			explore_path_target_.at<double>(0, i) = uniform(engine); // row vector
 		}
-	}
-
-	// disp_img = disp_img * 128;
-
-	std::cout << disp_img.channels() << std::endl;
-	// disp_img = disp_img * 255; // white background...
-	cv::Mat curr_mu = cv::Mat::zeros(1, 2, CV_64F);
-	// just plot the centers... hypothetical.. do not need the real data...
-
-	Loader loader(dim_action_, trend_number_, dir_id_, dir_);
-	Ellipse elips(initial_x, initial_y, initial_long_axis, initial_short_axis, initial_angle, radius);
-
-	loader.FormatWeightsForTestDirectory();
-	loader.FormatTrendDirectory();
-	loader.LoadProprioception(num_train_data_, num_test_data_, train_prop_, test_prop_, home_prop_, train_target_idx, test_target_idx);
-	loader.LoadWeightsForTest(elips.transform_, 1, dim_feature_);
-	loader.LoadEllipse(elips);
-	elips.SetRefEllipseParameters();
-
-	for(int i = 0; i < grid_number; i++)
-	{
-		for(int j = 0; j < grid_number; j++)
+		path_length = cv::norm(explore_path_target_ - prev_explore_path_target_, cv::NORM_L2);
+		num_frame_path = (int)(path_length / max_speed) + 1;
+		path.clear();
+		for(int i = 1; i <= num_frame_path; i++)
 		{
-			grid_prop.at<double>(i * grid_number + j, 0) = -1 + 2.0 / (grid_number - 1) * i;
-			grid_prop.at<double>(i * grid_number + j, 1) = -1 + 2.0 / (grid_number - 1) * j;
-		}
-	}
-
-	aim_idx = 0;
-	aim_frame_idx = train_target_idx.at<double>(aim_idx, 0);
-	// loader.LoadImage(aim_frame_idx, disp_img);
-	std::cout << disp_img.channels() << std::endl;
-	
-	for(int idx = 0; idx < grid_number * grid_number; idx++)
-	{
-		
-		double current_data = 1.0;
-		double* p_current_data = &current_data;
-		feature_data_.at<double>(0, 0) = grid_prop.at<double>(idx, 0) - home_prop_.at<double>(0, 0);
-		feature_data_.at<double>(1, 0) = grid_prop.at<double>(idx, 1) - home_prop_.at<double>(0, 1);
-		kernel_list.clear();
-		SetKernel(kernel_list, feature_data_, p_current_data, kernel_dim, curr_pos, 2, kernel_dim, 0); 
-		for(int i = 0; i < kernel_list.size(); i++)
-			feature.at<double>(i, 0) = kernel_list[i];
-
-		action = elips.transform_.EvaluateInvTransformation(feature);
-		elips.UpdateEllipseByAction(action); 
-		elips.CopyToPrev();
-		CopyToPrev();	
-		curr_mu = elips.mu().t();
-		curr_mu.copyTo(grid_mu.rowRange(idx, idx + 1));
-
-		COLOUR c = GetColour(1, 0, 1);		
-		elips.DrawEllipse(disp_img, 1.0, c); // draw ellipse	
-		std::cout << disp_img.channels() << std::endl;
-		// elips.DrawEllipse(disp_img, 1.0); // draw ellipse		
-	}
-
-	sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/grid_mu.bin", dir_id_);
-	FileIO::WriteMatDouble(grid_mu, grid_number * grid_number, 2, output_dir);
-
-	cv::imshow("explorer", disp_img); // show ellipse
-	cv::waitKey(0);
-	
-	std::cout << "diagnosis finished..." << std::endl;	
+			cv::Mat tmp_target = cv::Mat::zeros(1, num_joints_, CV_64F);
+			tmp_target = prev_explore_path_target_ + (explore_path_target_ - prev_explore_path_target_) * i / num_frame_path;
+			tmp_target.convertTo(tmp_target, CV_32F);
+			kd_trees.knnSearch(tmp_target, explore_path_kdtree_indices_, explore_path_kdtree_dists_, 1, cv::flann::SearchParams(64));
+			path.push_back(explore_path_kdtree_indices_.at<int>(0, 0));			
+		}	
+		explore_path_target_.copyTo(prev_explore_path_target_);
+	}		
+	aim_idx = path[0];
+	path.erase(path.begin());		
+	return aim_idx;
 }
 
-void Explorer::ConvertRefCovToDistMetric()
+
+
+//
+//void Explorer::ShowTransformationGrid(int num_grid, int weight_idx)
+//{
+//	char input_dir[400];
+//	char output_dir[400];	
+//	int aim_idx = 0;	
+//	int aim_frame_idx = 0;
+//	int num_gradient_iteration = 10;
+//	unsigned long iteration_count = 0;
+//	double depth_threshold = 0.8;
+//	double voxel_grid_size = 0.008;
+//	int cost_flag = 0;
+//	int write_trend_interval = 2000;
+//	int cloud_scale = 1;
+//	cv::Mat target_cloud, matched_target_cloud, transformed_cloud, indices, min_dists;
+//	cv::Mat cost = cv::Mat::zeros(1, 1, CV_32F);
+//	std::mt19937 engine(rd_());		
+//	std::vector<std::vector<double>> trend_array(num_trend_, std::vector<double>(0));
+//
+//	Loader loader(num_weights_, dim_feature_, num_trend_, dir_id_, dir_);
+//	loader.FormatWeightsForTestDirectory();
+//	loader.FormatTrendDirectory();
+//	loader.LoadLearningRates(transform_);			
+//	// loader.LoadProprioception(num_train_data_, train_prop_, train_target_idx_, home_prop_);		
+//	loader.LoadProprioception(num_train_data_, num_test_data_, train_prop_, test_prop_, home_prop_, train_target_idx_, test_target_idx_);	
+//	loader.LoadWeightsForTest(transform_);
+//	cv::Mat size = cv::Mat::zeros(1, 1, CV_64F);
+//	
+//	int home_frame_idx = train_target_idx_.at<double>(0, 0);
+//	loader.LoadBinaryPointCloud(cloud_, home_frame_idx);
+//	// cloud_ = cloud_ * cloud_scale_;
+//	SetFeature(feature_, feature_home_, aim_idx, train_prop_);
+//	// transform_.CalcTransformInv(feature_);
+//	// transform_.TransformDataInv(cloud_, home_cloud_, 1);		
+//
+//	boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer;
+//	
+//	viewer = boost::shared_ptr<pcl::visualization::PCLVisualizer>(new pcl::visualization::PCLVisualizer("cloud Viewer"));
+//	viewer->setBackgroundColor(0, 0, 0);	
+//	viewer->initCameraParameters();	
+//	
+//	for(int i = 0; i < num_grid; i++)
+//	{
+//		for(int j = 0; j < num_grid; j++)
+//		{
+//			cv::Mat curr_prop = cv::Mat::zeros(1, num_joints_, CV_64F);
+//			curr_prop.at<double>(0, 0) = -1.0 + (0.5 + i) * 2.0 / num_grid;
+//			curr_prop.at<double>(0, 1) = -1.0 + (0.5 + j) * 2.0 / num_grid;
+//			prop_diff_ = train_prop_ - repeat(curr_prop, num_train_data_, 1);
+//			prop_diff_ = prop_diff_.mul(prop_diff_);
+//			reduce(prop_diff_, prop_dist_, 1, CV_REDUCE_SUM);
+//			sortIdx(prop_dist_, aim_idx_matrix_, CV_SORT_EVERY_COLUMN + CV_SORT_ASCENDING);	
+//			aim_idx = (int)aim_idx_matrix_.at<int>(0, 0);
+//
+//			aim_frame_idx = train_target_idx_.at<double>(aim_idx, 0);
+//			loader.LoadBinaryPointCloud(cloud_, aim_frame_idx);
+//			// cloud_ = cloud_ * cloud_scale_;
+//			// cloud_.colRange(0, dim_transform_ - 1) = cloud_.colRange(0, dim_transform_ - 1) * cloud_scale_;
+//			SetFeature(feature_, feature_home_, aim_idx, train_prop_);
+//			// transform_.CalcTransformInv(feature_);
+//			// transform_.TransformDataInv(cloud_, home_cloud_, 1);				
+//			// transform_.TransformData(home_cloud_, transformed_cloud, 1);
+//			
+//			pcl::PointCloud<pcl::PointXYZ>::Ptr transformed_cloud_pcd(new pcl::PointCloud<pcl::PointXYZ>);		
+//			transformed_cloud = cv::Mat::zeros(home_cloud_[weight_idx].rows, dim_transform_, CV_64F);
+//			home_cloud_[weight_idx].copyTo(transformed_cloud);
+//			// transformed_cloud.colRange(0, dim_transform_ - 1) = home_cloud_[weight_idx].colRange(0, dim_transform_ - 1) / cloud_scale_;			
+//			Mat2PCD(transformed_cloud, transformed_cloud_pcd);						
+//			pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> transformed_cloud_color(transformed_cloud_pcd, 0, 255, 0);
+//
+//			char cloud_name[10];
+//			sprintf(cloud_name, "%d_%d", i, j);			
+//			viewer->addPointCloud<pcl::PointXYZ>(transformed_cloud_pcd, transformed_cloud_color, cloud_name);												
+//		}
+//	}
+//	viewer->spin();
+//
+//}
+//
+//void Explorer::RecordingTrend(Transform& transform, Loader& loader, std::vector<std::vector<double>>& trend_array, int iter, int write_trend_interval, int aim_idx)
+//{
+//	// hack for the two joint case...
+//	cv::Mat w_0 = transform_.w(0);
+//	cv::Mat w_1 = transform_.w(1);
+//	cv::Mat fisher_inv = transform_.fisher_inv(0);
+//	cv::Mat natural_grad = transform_.natural_w_grad(0);
+//	cv::Mat grad = transform_.w_grad(0);
+//	int trend_number = 15; // 26;
+//	trend_array[0].push_back(cv::norm(w_0.rowRange(0, 1), cv::NORM_L2)); trend_array[1].push_back(cv::norm(w_0.rowRange(1, 2), cv::NORM_L2));
+//	trend_array[2].push_back(cv::norm(w_0.rowRange(2, 3), cv::NORM_L2)); trend_array[3].push_back(cv::norm(w_0.rowRange(3, 4), cv::NORM_L2));      
+//	trend_array[4].push_back(cv::norm(w_0.rowRange(4, 5), cv::NORM_L2)); trend_array[5].push_back(cv::norm(w_0.rowRange(5, 6), cv::NORM_L2));		
+//	//trend_array[6].push_back(cv::norm(w_0.rowRange(6, 7), cv::NORM_L2)); trend_array[7].push_back(cv::norm(w_0.rowRange(7, 8), cv::NORM_L2));	
+//	//trend_array[8].push_back(cv::norm(w_0.rowRange(8, 9), cv::NORM_L2)); trend_array[9].push_back(cv::norm(w_0.rowRange(9, 10), cv::NORM_L2));
+//	//trend_array[10].push_back(cv::norm(w_0.rowRange(10, 11), cv::NORM_L2)); trend_array[11].push_back(cv::norm(w_0.rowRange(11, 12), cv::NORM_L2));
+//
+//	trend_array[6].push_back(cv::norm(w_1.rowRange(0, 1), cv::NORM_L2)); trend_array[7].push_back(cv::norm(w_1.rowRange(1, 2), cv::NORM_L2));
+//	trend_array[8].push_back(cv::norm(w_1.rowRange(2, 3), cv::NORM_L2)); trend_array[9].push_back(cv::norm(w_1.rowRange(3, 4), cv::NORM_L2));      
+//	trend_array[10].push_back(cv::norm(w_1.rowRange(4, 5), cv::NORM_L2)); trend_array[11].push_back(cv::norm(w_1.rowRange(5, 6), cv::NORM_L2));		
+//	/*trend_array[18].push_back(cv::norm(w_1.rowRange(6, 7), cv::NORM_L2)); trend_array[19].push_back(cv::norm(w_1.rowRange(7, 8), cv::NORM_L2));	
+//	trend_array[20].push_back(cv::norm(w_1.rowRange(8, 9), cv::NORM_L2)); trend_array[21].push_back(cv::norm(w_1.rowRange(9, 10), cv::NORM_L2));
+//	trend_array[22].push_back(cv::norm(w_1.rowRange(10, 11), cv::NORM_L2)); trend_array[23].push_back(cv::norm(w_1.rowRange(11, 12), cv::NORM_L2));*/
+//
+//	// trend_array[12].push_back(cv::norm(fisher_inv, cv::NORM_L2)); trend_array[13].push_back(cv::norm(natural_grad, cv::NORM_L2));
+//	trend_array[12].push_back(cv::norm(natural_grad, cv::NORM_L2));
+//	trend_array[13].push_back(cv::norm(fisher_inv, cv::NORM_L2)); 
+//	trend_array[14].push_back(aim_idx);
+//	/*trend_array[10].push_back(cv::norm(w.rowRange(10, 11), cv::NORM_L2)); trend_array[11].push_back(cv::norm(w.rowRange(11, 12), cv::NORM_L2));	
+//	trend_array[12].push_back(cv::norm(grad, cv::NORM_L2));*/
+//	if(iter % write_trend_interval == 0)
+//	{			
+//		int append_flag = iter == 0 ? 0 : 1;			
+//		loader.SaveTrend(trend_array, trend_number, append_flag);								
+//		for(int i = 0; i < trend_number; i++)
+//			trend_array[i].clear();
+//	}
+//	loader.SaveWeightsForTest(transform);
+//	/*cv::Mat fisher_inv = transform_.fisher_inv();
+//	cv::Mat natural_grad = transform_.natural_w_grad();*/
+//}
+//
+//void Explorer::ReOrder(cv::Mat& input, cv::Mat& output, cv::Mat& input_indices)
+//{
+//	output = cv::Mat::zeros(input_indices.rows, input.cols, CV_64F);
+//	for(int p = 0; p < input_indices.rows; p++)
+//		for(int q = 0; q < input.cols; q++)
+//			output.at<double>(p, q) = input.at<double>(input_indices.at<int>(p, 0), q);				
+//}
+//
+void Explorer::PCD2Mat(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, cv::Mat& cloud_mat)
 {
-	char input_dir[400];
-	char output_dir[400];
-	int iterations = 1000000;
-	cv::Mat elips_ini = cv::Mat::zeros(5, 1, CV_64F);
-	cv::Mat tmp_data = cv::Mat::zeros(iterations, 1, CV_64F);
-	cv::Mat ref_cov_data = cv::Mat::zeros(iterations, 4, CV_64F);
-	cv::Mat ref_mu_data = cv::Mat::zeros(iterations, 2, CV_64F);
-	cv::Mat img_cov_data = cv::Mat::zeros(iterations, 4, CV_64F);
-	cv::Mat img_mu_data = cv::Mat::zeros(iterations, 2, CV_64F);
-	cv::Mat train_target_idx = cv::Mat::zeros(num_train_data_, 1, CV_64F);	
-	cv::Mat test_target_idx = cv::Mat::zeros(num_test_data_, 1, CV_64F);
-	cv::Mat feature = cv::Mat::zeros(dim_feature_, 1, CV_64F);
-	cv::Mat action = cv::Mat::zeros(dim_action_, 1, CV_64F);
-
-	sprintf(input_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/cov_1_1_trend.bin", dir_id_);
-	FileIO::ReadMatDouble(tmp_data, iterations, 1, input_dir);
-	tmp_data.copyTo(ref_cov_data.colRange(0, 1));
-
-	sprintf(input_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/cov_1_2_trend.bin", dir_id_);
-	FileIO::ReadMatDouble(tmp_data, iterations, 1, input_dir);
-	tmp_data.copyTo(ref_cov_data.colRange(1, 2));
-
-	sprintf(input_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/cov_2_1_trend.bin", dir_id_);
-	FileIO::ReadMatDouble(tmp_data, iterations, 1, input_dir);
-	tmp_data.copyTo(ref_cov_data.colRange(2, 3));
-
-	sprintf(input_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/cov_2_2_trend.bin", dir_id_);
-	FileIO::ReadMatDouble(tmp_data, iterations, 1, input_dir);
-	tmp_data.copyTo(ref_cov_data.colRange(3, 4));
-
-	sprintf(input_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/mu_1_trend.bin", dir_id_);
-	FileIO::ReadMatDouble(tmp_data, iterations, 1, input_dir);
-	tmp_data.copyTo(ref_mu_data.colRange(0, 1));
-
-	sprintf(input_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/mu_2_trend.bin", dir_id_);
-	FileIO::ReadMatDouble(tmp_data, iterations, 1, input_dir);
-	tmp_data.copyTo(ref_mu_data.colRange(1, 2));
-
-	sprintf(input_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/input/elips_ini_%d.bin", dir_id_);
-	FileIO::ReadMatDouble(elips_ini, 5, 1, input_dir);
-
-	double initial_x = elips_ini.at<double>(0, 0); // 380; // 300; // 218; 
-	double initial_y = elips_ini.at<double>(1, 0); // 220; // 260; // 230; 
-	double initial_long_axis = elips_ini.at<double>(2, 0); 
-	double initial_short_axis = elips_ini.at<double>(3, 0); 
-	double initial_angle = elips_ini.at<double>(4, 0); // -1.0 * PI / 20; // 1.0 * PI / 8.5; 
-	double radius = 3.0;
-	cv::Mat mu = cv::Mat::zeros(2, 1, CV_64F);
-	cv::Mat cov = cv::Mat::zeros(2, 2, CV_64F);
-	cv::Mat img_mu = cv::Mat::zeros(2, 1, CV_64F);
-	cv::Mat img_cov = cv::Mat::zeros(2, 2, CV_64F);
-	cv::Mat img_cov_inv = cv::Mat::zeros(2, 2, CV_64F);
-	Ellipse elips(initial_x, initial_y, initial_long_axis, initial_short_axis, initial_angle, radius);
-	Loader loader(dim_action_, trend_number_, dir_id_, dir_);
-
-	loader.FormatWeightsForTestDirectory();
-	loader.FormatTrendDirectory();
-	loader.LoadProprioception(num_train_data_, num_test_data_, train_prop_, test_prop_, home_prop_, train_target_idx, test_target_idx);
-	// loader.LoadWeightsForTest(elips.transform_, 1, dim_feature_);
-
-	SetFeature(feature, 0, train_prop_, home_prop_);
-	action = elips.transform_.EvaluateInvTransformation(feature);
-	elips.UpdateEllipseByAction(action);
-
-
-	for(int i = 0; i < iterations; i++)	
+	int size = cloud->points.size();
+	int dim = 4;
+	cloud_mat = cv::Mat::zeros(size, dim, CV_64F);
+	for(int i = 0; i < size; i++)
 	{
-		mu.at<double>(0, 0) = ref_mu_data.at<double>(i, 0);
-		mu.at<double>(1, 0) = ref_mu_data.at<double>(i, 1);
-		cov.at<double>(0, 0) = ref_cov_data.at<double>(i, 0);
-		cov.at<double>(0, 1) = ref_cov_data.at<double>(i, 1);
-		cov.at<double>(1, 0) = ref_cov_data.at<double>(i, 2);
-		cov.at<double>(1, 1) = ref_cov_data.at<double>(i, 3);
-		elips.set_ref_mu(mu);
-		elips.set_ref_cov(cov);
-		elips.SetRefEllipseParameters();
-		elips.UpdateEllipseByAction(action);
-		img_mu = elips.mu();
-		img_cov = elips.cov();
-		cv::invert(img_cov, img_cov_inv);
-		img_mu_data.at<double>(i, 0) = img_mu.at<double>(0, 0);
-		img_mu_data.at<double>(i, 1) = img_mu.at<double>(1, 0);
-		img_cov_data.at<double>(i, 0) = img_cov_inv.at<double>(0, 0);
-		img_cov_data.at<double>(i, 1) = img_cov_inv.at<double>(0, 1);
-		img_cov_data.at<double>(i, 2) = img_cov_inv.at<double>(1, 0);
-		img_cov_data.at<double>(i, 3) = img_cov_inv.at<double>(1, 1);
-
-		if(i % 10000 == 1)
-			std::cout << "iteration " << i << "..." << std::endl;		
+		cloud_mat.at<double>(i, 0) = cloud->points[i].x;
+		cloud_mat.at<double>(i, 1) = cloud->points[i].y;
+		cloud_mat.at<double>(i, 2) = cloud->points[i].z;
+		cloud_mat.at<double>(i, 3) = 1.0;
 	}
-	sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/img_mu_1_trend.bin", dir_id_);
-	img_mu_data.colRange(0, 1).copyTo(tmp_data);
-	FileIO::WriteMatDouble(tmp_data, iterations, 1, output_dir);
-
-	sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/img_mu_2_trend.bin", dir_id_);
-	img_mu_data.colRange(1, 2).copyTo(tmp_data);
-	FileIO::WriteMatDouble(tmp_data, iterations, 1, output_dir);
-
-	sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/img_cov_1_1_trend.bin", dir_id_);
-	img_cov_data.colRange(0, 1).copyTo(tmp_data);
-	FileIO::WriteMatDouble(tmp_data, iterations, 1, output_dir);
-
-	sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/img_cov_1_2_trend.bin", dir_id_);
-	img_cov_data.colRange(1, 2).copyTo(tmp_data);
-	FileIO::WriteMatDouble(tmp_data, iterations, 1, output_dir);
-
-	sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/img_cov_2_1_trend.bin", dir_id_);
-	img_cov_data.colRange(2, 3).copyTo(tmp_data);
-	FileIO::WriteMatDouble(tmp_data, iterations, 1, output_dir);
-
-	sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/img_cov_2_2_trend.bin", dir_id_);
-	img_cov_data.colRange(3, 4).copyTo(tmp_data);
-	FileIO::WriteMatDouble(tmp_data, iterations, 1, output_dir);
-	
 }
+//
+void Explorer::Mat2PCD(cv::Mat& cloud_mat, pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud)
+{
+	int size = cloud_mat.rows;
+	std::vector<pcl::PointXYZ> points_vec(size);
+	cloud.reset(new pcl::PointCloud<pcl::PointXYZ>());
+	for(int i = 0; i < size; i++)
+	{
+		pcl::PointXYZ point;
+		point.x = cloud_mat.at<double>(i, 0);
+		point.y = cloud_mat.at<double>(i, 1);
+		point.z = cloud_mat.at<double>(i, 2);
+		cloud->push_back(point);
+	}	
+}
+//
+//void Explorer::PreprocessingAndSavePointCloud()
+//{
+//	char input_dir[400];
+//	char output_dir[400];		
+//	unsigned long iteration_count = 0;
+//	double depth_threshold = 0.8;
+//	double voxel_grid_size = 0.005; // 0.010;
+//	int num_clouds = num_train_data_;
+//	std::mt19937 engine(rd_());		
+//
+//	Loader loader(num_weights_, dim_feature_, num_trend_, dir_id_, dir_);
+//	loader.FormatWeightsForTestDirectory();
+//	loader.FormatTrendDirectory();
+//	loader.LoadLearningRates(transform_);
+//	// algorithms
+//	pcl::PassThrough<pcl::PointXYZ> pass;
+//	pcl::PCDReader reader;
+//	pcl::VoxelGrid<pcl::PointXYZ> voxel_grid;	
+//	
+//	pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+//	 /*pcl::PointCloud<pcl::PointXYZ>::Ptr prev_cloud(new pcl::PointCloud<pcl::PointXYZ>);
+//	 pcl::PointCloud<pcl::PointXYZ>::Ptr home_cloud(new pcl::PointCloud<pcl::PointXYZ>);
+//	 pcl::PointCloud<pcl::PointXYZ>::Ptr prev_home_cloud(new pcl::PointCloud<pcl::PointXYZ>);*/
+//	 pcl::PointCloud<pcl::PointXYZ>::Ptr tmp_cloud(new pcl::PointCloud<pcl::PointXYZ>);	
+//	// point clouds		
+//	 /*boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer((new pcl::visualization::PCLVisualizer("cloud Viewer")));
+//	 viewer->setBackgroundColor(0, 0, 0);	
+//	 viewer->initCameraParameters();*/	
+//	for(iteration_count = 0; iteration_count < 17900; iteration_count++)
+//	{					
+//		loader.LoadPointCloud(cloud, reader, iteration_count); // load point cloud			
+//		DepthFiltering(depth_threshold, pass, cloud, tmp_cloud);
+//		DownSamplingPointCloud(voxel_grid_size, voxel_grid, tmp_cloud, cloud);
+//		loader.SavePointCloudAsBinaryMat(cloud, iteration_count);
+//		if(iteration_count % 100 == 1)
+//			std::cout << "iteration: " << iteration_count << std::endl;
+//	}
+//}
+//
+//void Explorer::DepthFiltering(float depth, pcl::PassThrough<pcl::PointXYZ>& pass, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, pcl::PointCloud<pcl::PointXYZ>::Ptr filtered_cloud)
+//{
+//	pass.setInputCloud(cloud);
+//	pass.setFilterFieldName ("z");
+//	pass.setFilterLimits(0.0, depth);
+//	pass.filter(*filtered_cloud);
+//}
+//
+//void Explorer::DownSamplingPointCloud(double voxel_size, pcl::VoxelGrid<pcl::PointXYZ>& voxel_grid, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, pcl::PointCloud<pcl::PointXYZ>::Ptr down_sampled_cloud)
+//{
+//	voxel_grid.setInputCloud(cloud);
+//	voxel_grid.setLeafSize(voxel_size, voxel_size, voxel_size);
+//	voxel_grid.filter(*down_sampled_cloud);
+//}
+//
+//void Explorer::ShowCloudSequence()
+//{
+//	int num_cloud = 4000;
+//	Loader loader(12, 3, 13, dir_id_, dir_);
+//	pcl::PCDReader reader;
+//	pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+//	boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer((new pcl::visualization::PCLVisualizer("cloud Viewer")));
+//	viewer->setBackgroundColor(0, 0, 0);	
+//	viewer->initCameraParameters();	
+//	for(int i = 0; i < num_cloud; i++)
+//	{
+//		loader.LoadPointCloud(cloud, reader, i);
+//		pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> cloud_color(cloud, 0, 0, 255);	
+//		if(i == 0)
+//			viewer->addPointCloud<pcl::PointXYZ>(cloud, cloud_color, "original_cloud");	
+//		else
+//			viewer->updatePointCloud(cloud, cloud_color, "original_cloud");
+//		viewer->spinOnce(1);		
+//	}
+//	viewer->close();
+//}
+//
+//void Explorer::GenerateLinePath(std::vector<std::vector<double>>& path, std::vector<double>& targets, std::vector<double>& prev_targets)
+//{		
+//	double max_speed = 8 / 20.0;
+//	double path_length = 0;
+//	for(int i = 0; i < num_joints_; i++)	
+//		path_length += sqrt(pow(targets[i] - prev_targets[i], 2));	
+//	
+//	int num_frame_path = (int)(path_length / max_speed) + 1;
+//
+//	path = std::vector<std::vector<double>>(num_joints_, std::vector<double>(num_frame_path));
+//
+//	for(int i = 0; i < num_joints_; i++)	
+//		for(int j = 0; j < num_frame_path; j++)		
+//			path[i][j] = prev_targets[i] + (targets[i] - prev_targets[i]) * (j + 1) / num_frame_path;
+//	
+//
+//}
+//
+//int Explorer::GenerateAimIndexLinePath(std::mt19937& engine, int current_iteration)
+//{
+//	int aim_idx = 0;
+//	double current_range = 0;
+//	
+//	current_range = starting_exploration_range_ + (max_exploration_range_ - starting_exploration_range_) * current_iteration / range_expanding_period_;	
+//	current_range = current_range > max_exploration_range_ ? max_exploration_range_ : current_range;
+//	std::uniform_real_distribution<double> uniform(-1.0 * current_range, 1.0 * current_range);	  	
+//	
+//	// generate path
+//	if(path_count_ == 0)
+//	{
+//		for(int i = 0; i < num_joints_; i++)
+//			targets_[i] = uniform(engine);
+//		
+//		GenerateLinePath(path_, targets_, prev_targets_);
+//		for(int i = 0; i < num_joints_; i++)
+//			prev_targets_[i] = targets_[i];
+//		
+//		path_count_ = path_[0].size();
+//	}
+//
+//	for(int i = 0; i < num_joints_; i++)
+//		curr_prop_.at<double>(0, i) = path_[i][path_[0].size() - path_count_];	
+//	path_count_--;
+//	
+//	curr_prop_matrix_ = repeat(curr_prop_, num_train_data_, 1);
+//	prop_diff_ = train_prop_ - curr_prop_matrix_;
+//	prop_diff_ = prop_diff_.mul(prop_diff_);
+//	reduce(prop_diff_, prop_dist_, 1, CV_REDUCE_SUM);
+//	sortIdx(prop_dist_, aim_idx_matrix_, CV_SORT_EVERY_COLUMN + CV_SORT_ASCENDING);	
+//	aim_idx = (int)aim_idx_matrix_.at<int>(0, 0);
+//
+//	return aim_idx;
+//
+//}
+// home_cloud_kd_trees.radiusSearch(test_query, home_cloud_indices, home_cloud_min_dists, 0.1, 200, cv::flann::SearchParams(64)); // kd tree search, index indices the matches in query cloud
+	// just for debugging
+	/*char output_dir[40];
+	sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Solutions/unified_framework/test/home_cloud_indices.bin");
+	FileIO::WriteMatInt(home_cloud_neighbor_indices, home_cloud.rows, max_num_neighbor, output_dir);
+	sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Solutions/unified_framework/test/home_cloud_min_dists.bin");
+	FileIO::WriteMatFloat(home_cloud_neighbor_dists, home_cloud.rows, max_num_neighbor, output_dir);
+	sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Solutions/unified_framework/test/home_cloud_weight_label.bin");
+	FileIO::WriteMatDouble(home_cloud_weight_label, home_cloud.rows, num_joints, output_dir);*/

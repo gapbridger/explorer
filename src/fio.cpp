@@ -102,3 +102,10 @@ void FileIO::WriteMatDouble(cv::Mat& src, int h, int w, std::string name){
     }
     fclose(file_pt);
 }
+
+std::string FileIO::ReadFileString(std::string name)
+{
+	std::ifstream file_pt((char*)name.c_str());
+	std::string contents((std::istreambuf_iterator<char>(file_pt)), std::istreambuf_iterator<char>());
+	return contents;
+}

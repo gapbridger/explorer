@@ -5,221 +5,81 @@
 #include "opencv2/imgproc/types_c.h"
 
 
-Loader::Loader(int action_number, int trend_number, int dir_id, char* dir)
+Loader::Loader(int num_weights, int num_joints, int feature_dim, int trend_number, int trial_id, char* dataset)
 {
 	// initialize weights
-	action_number_ = action_number;
-	diagnosis_number_ = action_number_ + 2;
+	num_weights_ = num_weights;
+	feature_dim_ = feature_dim;
+	// diagnosis_number_ = weight_number;
 	trend_number_ = trend_number;  
-	dir_id_ = dir_id;
-	// just check...
-	if(action_number_ < 5 || trend_number_ < 6)
-		std::cout << "directory number incorrect..." << std::endl;
-
-	test_weights_dir_ = new char*[action_number_];  
-	diagnosis_weights_dir_ = new char*[diagnosis_number_];  
-	trend_dir_ = new char*[trend_number_];  
-
+	trial_id_ = trial_id;
+	num_joints_ = num_joints;
 	int len = 400;
-	for(int i = 0; i < action_number_; i++)
-		test_weights_dir_[i] = new char[len];
+	test_weights_dir_ = new char*[num_joints];  
+	for(int i = 0; i < num_joints; i++)
+		test_weights_dir_[i] = new char[len]; 
+	diagnosis_weights_dir_ = new char[len];  
+	trend_dir_ = new char*[trend_number_]; 
 	for(int i = 0; i < trend_number_; i++)
 		trend_dir_[i] = new char[len]; 	
-	for(int i = 0; i < diagnosis_number_; i++)
-		diagnosis_weights_dir_[i] = new char[len]; 	
 
-	sprintf(common_output_prefix_, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/", dir_id_);
-	sprintf(common_diagnosis_prefix_, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/diagnosis_%d/", dir_id_);
-	sprintf(common_data_prefix_, "D:/Document/HKUST/Year 5/Research/Data/Arm Images/");
-	strcat(common_data_prefix_, dir);
+	sprintf(common_output_prefix_, "D:/Document/HKUST/Year 5/Research/Solutions/unified_framework/output/para_%d/", trial_id_);
+	sprintf(common_diagnosis_prefix_, "D:/Document/HKUST/Year 5/Research/Solutions/unified_framework/output/diagnosis_%d/", trial_id_);
+	sprintf(common_data_prefix_, "D:/Document/HKUST/Year 5/Research/Data/PointClouds/");
+	strcat(common_data_prefix_, dataset);
 	strcat(common_data_prefix_, "/"); // march 10 2014/"); // feb 23
+
 }
 
-/*****************Directory Formating functions**********************/
-
-// format test weight directory (final weight loaded for test)
-void Loader::FormatWeightsForTestDirectory()
+void Loader::LoadWeightsForTest(Transform& transform)
 {
-	// char dir_idx_str[5];
-	// sprintf(dir_idx_str, "%d/", dir_id_);
-	for(int i = 0; i < action_number_; i++){
-		memset(&test_weights_dir_[i][0], 0, sizeof(test_weights_dir_[i]));
-		strcpy(test_weights_dir_[i], common_output_prefix_);
-		// strcpy(test_weights_dir_[i], "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_");
-		// strcat(test_weights_dir_[i], dir_idx_str);
-	}
-	AppendActionWeightName(test_weights_dir_);
-	for(int i = 0; i < action_number_; i++)
-		strcat(test_weights_dir_[i], ".bin");	
-}
-
-void Loader::FormatWeightsForDiagnosisDirectory()
-{
-	// char dir_idx_str[5];
-	// sprintf(dir_idx_str, "%d/", dir_id_);
-	for(int i = 0; i < diagnosis_number_; i++){
-		memset(&diagnosis_weights_dir_[i][0], 0, sizeof(diagnosis_weights_dir_[i]));
-		strcpy(diagnosis_weights_dir_[i], common_diagnosis_prefix_);
-		// strcpy(test_weights_dir_[i], "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_");
-		// strcat(test_weights_dir_[i], dir_idx_str);
-	}
-	AppendDiagnosisWeightName(diagnosis_weights_dir_);	
-}
-
-
-// format trend directory
-void Loader::FormatTrendDirectory()
-{
-	// char dir_idx_str[5];
-	// sprintf(dir_idx_str, "%d/", dir_id_);
-	for(int i = 0; i < trend_number_; i++){
-		memset(&trend_dir_[i][0], 0, sizeof(trend_dir_[i]));
-		strcpy(trend_dir_[i], common_output_prefix_); // "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_"
-		// strcat(trend_dir_[i], dir_idx_str);
-	}
-	AppendTrendName(trend_dir_);
-	for(int i = 0; i < trend_number_; i++){
-		strcat(trend_dir_[i], "_trend.bin");
-	}	
-}
-
-void Loader::AppendActionWeightName(char** dir_str_array){
-	if(dir_str_array != NULL){
-		strcat(dir_str_array[0], "xw");
-		strcat(dir_str_array[1], "yw");
-		strcat(dir_str_array[2], "aw");
-		strcat(dir_str_array[3], "lxw");
-		strcat(dir_str_array[4], "sxw");    
-	}
-}
-
-void Loader::AppendDiagnosisWeightName(char** dir_str_array)
-{
-	if(dir_str_array != NULL)
+	cv::Mat current_weight = cv::Mat::zeros(num_weights_, feature_dim_, CV_64F);	
+	for(int i = 0; i < num_joints_; i++)
 	{
-		strcat(dir_str_array[0], "xw");
-		strcat(dir_str_array[1], "yw");
-		strcat(dir_str_array[2], "aw");
-		strcat(dir_str_array[3], "lxw");
-		strcat(dir_str_array[4], "sxw");    
-		strcat(dir_str_array[5], "ref_mu");    
-		strcat(dir_str_array[6], "ref_cov");    
+		FileIO::ReadMatDouble(current_weight, num_weights_, feature_dim_, test_weights_dir_[i]); 
+		transform.set_w(current_weight, i);
 	}
 }
 
-void Loader::AppendTrendName(char** trend_dir_str_array){
-	if(trend_dir_str_array != NULL){
-		strcat(trend_dir_str_array[0], "xw");
-		strcat(trend_dir_str_array[1], "yw");
-		strcat(trend_dir_str_array[2], "aw");
-		strcat(trend_dir_str_array[3], "lxw");
-		strcat(trend_dir_str_array[4], "sxw");
-		strcat(trend_dir_str_array[5], "cov_1_1");
-		strcat(trend_dir_str_array[6], "cov_1_2");
-		strcat(trend_dir_str_array[7], "cov_2_1");
-		strcat(trend_dir_str_array[8], "cov_2_2");
-		strcat(trend_dir_str_array[9], "mu_1");
-		strcat(trend_dir_str_array[10], "mu_2");
-		strcat(trend_dir_str_array[11], "idx");
+void Loader::SaveWeightsForTest(Transform& transform)
+{
+	cv::Mat current_weight = cv::Mat::zeros(num_weights_, feature_dim_, CV_64F);
+	for(int i = 0; i < num_joints_; i++)
+	{
+		current_weight = transform.w(i);
+		FileIO::WriteMatDouble(current_weight, num_weights_, feature_dim_, test_weights_dir_[i]);	
 	}
 }
 
-/*****************Loading functions**********************/
-
-void Loader::LoadWeightsForTest(Transform& transform, int output_dim, int input_dim)
-{
-	cv::Mat current_weight = cv::Mat::zeros(output_dim, input_dim, CV_64F);	
-	FileIO::ReadMatDouble(current_weight, output_dim, input_dim, test_weights_dir_[0]); 
-	transform.set_w_x(current_weight);
-	FileIO::ReadMatDouble(current_weight, output_dim, input_dim, test_weights_dir_[1]); 
-	transform.set_w_y(current_weight);
-	FileIO::ReadMatDouble(current_weight, output_dim, input_dim, test_weights_dir_[2]); 
-	transform.set_w_phi(current_weight);
-	FileIO::ReadMatDouble(current_weight, output_dim, input_dim, test_weights_dir_[3]); 
-	transform.set_w_sx(current_weight);
-	FileIO::ReadMatDouble(current_weight, output_dim, input_dim, test_weights_dir_[4]); 
-	transform.set_w_sy(current_weight);
-
-}
-
-void Loader::SaveWeightsForTest(Transform& transform, int output_dim, int input_dim)
-{
-	cv::Mat current_weight = cv::Mat::zeros(output_dim, input_dim, CV_64F);
-	current_weight = transform.w_x();
-	FileIO::WriteMatDouble(current_weight, output_dim, input_dim, test_weights_dir_[0]);
-	current_weight = transform.w_y();
-	FileIO::WriteMatDouble(current_weight, output_dim, input_dim, test_weights_dir_[1]);
-	current_weight = transform.w_phi();
-	FileIO::WriteMatDouble(current_weight, output_dim, input_dim, test_weights_dir_[2]);
-	current_weight = transform.w_sx();
-	FileIO::WriteMatDouble(current_weight, output_dim, input_dim, test_weights_dir_[3]);
-	current_weight = transform.w_sy();
-	FileIO::WriteMatDouble(current_weight, output_dim, input_dim, test_weights_dir_[4]);
-}
-
-void Loader::SaveWeightsForDiagnosis(Transform& transform, Ellipse& ellipse, int output_dim, int input_dim, int diagnosis_idx)
+void Loader::SaveWeightsForDiagnosis(Transform& transform, int diagnosis_idx)
 {
 	char tmp_dir[20];	
 	FormatWeightsForDiagnosisDirectory();
-	sprintf(tmp_dir, "_%d.bin", diagnosis_idx);
-	for(int i = 0; i < diagnosis_number_; i++)
-		strcat(diagnosis_weights_dir_[i], tmp_dir);	
-
-	cv::Mat current_weight = cv::Mat::zeros(output_dim, input_dim, CV_64F);
-	current_weight = transform.w_x();
-	FileIO::WriteMatDouble(current_weight, output_dim, input_dim, diagnosis_weights_dir_[0]);
-	current_weight = transform.w_y();
-	FileIO::WriteMatDouble(current_weight, output_dim, input_dim, diagnosis_weights_dir_[1]);
-	current_weight = transform.w_phi();
-	FileIO::WriteMatDouble(current_weight, output_dim, input_dim, diagnosis_weights_dir_[2]);
-	current_weight = transform.w_sx();
-	FileIO::WriteMatDouble(current_weight, output_dim, input_dim, diagnosis_weights_dir_[3]);
-	current_weight = transform.w_sy();
-	FileIO::WriteMatDouble(current_weight, output_dim, input_dim, diagnosis_weights_dir_[4]);
-
-	cv::Mat elips_ref_mu = ellipse.ref_mu();
-	FileIO::WriteMatDouble(elips_ref_mu, 2, 1, diagnosis_weights_dir_[5]);
-	cv::Mat elips_ref_cov = ellipse.ref_cov();
-	FileIO::WriteMatDouble(elips_ref_cov, 2, 2, diagnosis_weights_dir_[6]);
+	sprintf(tmp_dir, "_%d.bin", diagnosis_idx);	
+	strcat(diagnosis_weights_dir_, tmp_dir);	
+	cv::Mat current_weight = cv::Mat::zeros(num_weights_, feature_dim_, CV_64F);
+	current_weight = transform.w(0);
+	FileIO::WriteMatDouble(current_weight, num_weights_, feature_dim_, diagnosis_weights_dir_);
 }
 
-void Loader::LoadWeightsForDiagnosis(Transform& transform, Ellipse& ellipse, int output_dim, int input_dim, int diagnosis_idx)
+void Loader::LoadWeightsForDiagnosis(Transform& transform, int diagnosis_idx)
 {
 	char tmp_dir[20];	
 	FormatWeightsForDiagnosisDirectory();
-	sprintf(tmp_dir, "_%d.bin", diagnosis_idx);
-	for(int i = 0; i < diagnosis_number_; i++)
-		strcat(diagnosis_weights_dir_[i], tmp_dir);	
-
-	cv::Mat current_weight = cv::Mat::zeros(output_dim, input_dim, CV_64F);
-	FileIO::ReadMatDouble(current_weight, output_dim, input_dim, diagnosis_weights_dir_[0]); 
-	transform.set_w_x(current_weight);
-	FileIO::ReadMatDouble(current_weight, output_dim, input_dim, diagnosis_weights_dir_[1]); 
-	transform.set_w_y(current_weight);
-	FileIO::ReadMatDouble(current_weight, output_dim, input_dim, diagnosis_weights_dir_[2]); 
-	transform.set_w_phi(current_weight);
-	FileIO::ReadMatDouble(current_weight, output_dim, input_dim, diagnosis_weights_dir_[3]); 
-	transform.set_w_sx(current_weight);
-	FileIO::ReadMatDouble(current_weight, output_dim, input_dim, diagnosis_weights_dir_[4]); 
-	transform.set_w_sy(current_weight);
-
-		cv::Mat elips_ref_mu = cv::Mat::zeros(2, 1, CV_64F);
-	FileIO::ReadMatDouble(elips_ref_mu, 2, 1, diagnosis_weights_dir_[5]);
-	ellipse.set_ref_mu(elips_ref_mu);
-	
-	cv::Mat elips_ref_cov = cv::Mat::zeros(2, 2, CV_64F);
-	FileIO::ReadMatDouble(elips_ref_cov, 2, 2, diagnosis_weights_dir_[6]);
-	ellipse.set_ref_cov(elips_ref_cov);	
-
+	sprintf(tmp_dir, "_%d.bin", diagnosis_idx);	
+	strcat(diagnosis_weights_dir_, tmp_dir);	
+	cv::Mat current_weight = cv::Mat::zeros(num_weights_, feature_dim_, CV_64F);
+	FileIO::ReadMatDouble(current_weight, num_weights_, feature_dim_, diagnosis_weights_dir_); 
+	transform.set_w(current_weight, 0);	
 }
 
 // save value trend: either output average value or weight norm...
-void Loader::SaveTrend(fL* trend_array, int trend_number, int append_flag)
+void Loader::SaveTrend(std::vector<std::vector<double>>& trend_array, int trend_number, int append_flag)
 {
   // FormatValueDirectory(dir_idx, true); // should be called in constructor
 	int data_len = 0;
 	cv::Mat data;
-	for(int i = 0; i < trend_number; i++){
+	for(int i = 0; i < trend_number_; i++){
 		data_len = trend_array[i].size();
 		data = cv::Mat::zeros(data_len, 1, CV_64F);
 		for(int j = 0; j < data_len; j++)
@@ -227,277 +87,176 @@ void Loader::SaveTrend(fL* trend_array, int trend_number, int append_flag)
 		FileIO::RecordMatDouble(data, data_len, 1, trend_dir_[i], append_flag); 
 	}
 }
-
-void Loader::SaveEllipse(Ellipse& ellipse)
+// format test weight directory (final weight loaded for test)
+void Loader::FormatWeightsForTestDirectory()
 {
-	char output_dir[400];	
-	// strcat(output_dir, dir_idx_str);
-	strcpy(output_dir, common_output_prefix_);
-	strcat(output_dir, "ref_mu.bin");
-	// sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/ref_mu.bin", dir_id_);
-	
-	cv::Mat elips_ref_mu = ellipse.ref_mu();
-	FileIO::WriteMatDouble(elips_ref_mu, 2, 1, output_dir);
-	strcpy(output_dir, common_output_prefix_);
-	strcat(output_dir, "ref_cov.bin");
-	// sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/ref_cov.bin", dir_id_);
-	cv::Mat elips_ref_cov = ellipse.ref_cov();
-	FileIO::WriteMatDouble(elips_ref_cov, 2, 2, output_dir);
-}
-
-void Loader::LoadEllipse(Ellipse& ellipse)
-{
-	char input_dir[400];
-	// mu
-	// sprintf(input_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/ref_mu.bin", dir_id_);
-	strcpy(input_dir, common_output_prefix_);
-	strcat(input_dir, "ref_mu.bin");
-	cv::Mat elips_ref_mu = cv::Mat::zeros(2, 1, CV_64F);
-	FileIO::ReadMatDouble(elips_ref_mu, 2, 1, input_dir);
-	ellipse.set_ref_mu(elips_ref_mu);
-	// cov
-	strcpy(input_dir, common_output_prefix_);
-	strcat(input_dir, "ref_cov.bin");
-	// sprintf(input_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_%d/ref_cov.bin", dir_id_);
-	cv::Mat elips_ref_cov = cv::Mat::zeros(2, 2, CV_64F);
-	FileIO::ReadMatDouble(elips_ref_cov, 2, 2, input_dir);
-	ellipse.set_ref_cov(elips_ref_cov);
-}
-
-char** Loader::test_weight_dir(){
-  return test_weights_dir_;
-}
-
-void Loader::LoadLearningRates(Ellipse& ellipse)
-{
-	char input_dir[400];
-	int num_rates = 6;
-	cv::Mat rates = cv::Mat::zeros(num_rates, 1, CV_64F);
-	sprintf(input_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/input/rate_%d.bin", dir_id_);
-	FileIO::ReadMatDouble(rates, num_rates, 1, input_dir);
-	ellipse.transform_.SetLearningRates(rates.at<double>(0, 0), rates.at<double>(1, 0), rates.at<double>(2, 0), rates.at<double>(3, 0), rates.at<double>(4, 0));
-	ellipse.set_eta(rates.at<double>(5, 0));
-}
-
-void Loader::LoadImage(int frame_idx, cv::Mat& disp_img)
-{
-	// only load "current" image 
-	char input_dir[400];
-	char tmp_dir[40];
-	cv::Mat img;
-	sprintf(tmp_dir, "images/%d.pgm", frame_idx);
-	strcpy(input_dir, common_data_prefix_);
-	strcat(input_dir, tmp_dir);		
-	// sprintf(input_dir, "D:/Document/HKUST/Year 5/Research/Data/Arm Images/feb 22 2014/images/%d.pgm", frame_idx);
-	img = cv::imread(input_dir, CV_LOAD_IMAGE_GRAYSCALE);
-	cv::cvtColor(img, disp_img, CV_GRAY2RGB);
-}
-
-// load sift key point
-void Loader::LoadSiftKeyPoint(cv::Mat& descriptors, cv::Mat& key_points, int frame_idx)
-{
-	int num_rows = 0; 
-	int num_cols = 0;
-	char input_dir[400];
-	char tmp_dir[40];
-	cv::Mat data_h = cv::Mat::zeros(1, 1, CV_64F);
-	cv::Mat data_w = cv::Mat::zeros(1, 1, CV_64F);
-	sprintf(tmp_dir, "descriptors/%d_w.bin", frame_idx);
-	strcpy(input_dir, common_data_prefix_);
-	strcat(input_dir, tmp_dir);
-	// sprintf(input_dir, "D:/Document/HKUST/Year 5/Research/Data/Arm Images/feb 22 2014/descriptors/%d_w.bin", frame_idx);
-	FileIO::ReadFloatMatToDouble(data_w, 1, 1, input_dir);
-	sprintf(tmp_dir, "descriptors/%d_h.bin", frame_idx);
-	strcpy(input_dir, common_data_prefix_);
-	strcat(input_dir, tmp_dir);
-	// sprintf(input_dir, "D:/Document/HKUST/Year 5/Research/Data/Arm Images/feb 22 2014/descriptors/%d_h.bin", frame_idx);
-	FileIO::ReadFloatMatToDouble(data_h, 1, 1, input_dir);
-	num_rows = (int)data_h.at<double>(0, 0); 
-	num_cols = (int)data_w.at<double>(0, 0); 
-	descriptors.create(num_rows, num_cols, CV_32F);
-	key_points.create(num_rows, 2, CV_32F);
-	sprintf(tmp_dir, "descriptors/%d.bin", frame_idx);
-	strcpy(input_dir, common_data_prefix_);
-	strcat(input_dir, tmp_dir);
-	// sprintf(input_dir, "D:/Document/HKUST/Year 5/Research/Data/Arm Images/feb 22 2014/descriptors/%d.bin", frame_idx);
-	FileIO::ReadMatFloat(descriptors, num_rows, num_cols, input_dir);
-	sprintf(tmp_dir, "descriptors/%d_pt.bin", frame_idx);
-	strcpy(input_dir, common_data_prefix_);
-	strcat(input_dir, tmp_dir);
-	// sprintf(input_dir, "D:/Document/HKUST/Year 5/Research/Data/Arm Images/feb 22 2014/descriptors/%d_pt.bin", frame_idx);
-	FileIO::ReadMatFloat(key_points, num_rows, 2, input_dir);
-}
-
-void Loader::LoadAllSiftKeyPoint(MatL& descriptors_list, MatL& key_points_list, int start_idx, int end_idx)
-{
-	int num_rows = 0; 
-	int num_cols = 0;
-	char input_dir[400];
-	char tmp_dir[40];
-	cv::Mat data_h = cv::Mat::zeros(1, 1, CV_64F);
-	cv::Mat data_w = cv::Mat::zeros(1, 1, CV_64F);
-
-	for(int idx = start_idx; idx < end_idx; idx++)
+	for(int i = 0; i < num_joints_; i++)
 	{
-		sprintf(tmp_dir, "descriptors/%d_w.bin", idx);
-		strcpy(input_dir, common_data_prefix_);
-		strcat(input_dir, tmp_dir);
-		FileIO::ReadFloatMatToDouble(data_w, 1, 1, input_dir);
+		memset(test_weights_dir_[i], 0, sizeof(test_weights_dir_));
+		strcpy(test_weights_dir_[i], common_output_prefix_);	
+		char tmp_dir[10];
+		sprintf(tmp_dir, "w_%d.bin", i);
+		strcat(test_weights_dir_[i], tmp_dir);
+	}
+}
 
-		sprintf(tmp_dir, "descriptors/%d_h.bin", idx);
-		strcpy(input_dir, common_data_prefix_);
-		strcat(input_dir, tmp_dir);
-		FileIO::ReadFloatMatToDouble(data_h, 1, 1, input_dir);
+void Loader::FormatWeightsForDiagnosisDirectory()
+{
+	memset(diagnosis_weights_dir_, 0, sizeof(diagnosis_weights_dir_));
+	strcpy(diagnosis_weights_dir_, common_diagnosis_prefix_);		
+	strcat(diagnosis_weights_dir_, "w");		
+}
 
-		num_rows = (int)data_h.at<double>(0, 0); 
-		num_cols = (int)data_w.at<double>(0, 0); 
+// format trend directory
+void Loader::FormatTrendDirectory()
+{
+	// char dir_idx_str[5];
+	// sprintf(dir_idx_str, "%d/", dir_id_);
+	for(int i = 0; i < trend_number_; i++)
+	{
+		memset(&trend_dir_[i][0], 0, sizeof(trend_dir_[i]));
+		strcpy(trend_dir_[i], common_output_prefix_); // "D:/Document/HKUST/Year 5/Research/Solutions/expansion/output/para_"
+		// strcat(trend_dir_[i], dir_idx_str);
+	}
+	AppendTrendName(trend_dir_);
+	for(int i = 0; i < trend_number_; i++)	
+		strcat(trend_dir_[i], "_trend.bin");
+		
+}
 
-		cv::Mat descriptors = cv::Mat::zeros(num_rows, num_cols, CV_32F);
-		cv::Mat key_points = cv::Mat::zeros(num_rows, 2, CV_32F);
+void Loader::AppendTrendName(char** trend_dir_str_array)
+{
+	if(trend_dir_str_array != NULL)
+	{
+		for(int i = 0; i < num_joints_; i++)
+		{
+			for(int j = 0; j < num_weights_; j++)
+			{
+				char curr_w_dir[10];
+				sprintf(curr_w_dir, "w_%d_%d", i, j);
+				strcat(trend_dir_str_array[i * num_weights_ + j], curr_w_dir);
+			}
+		}
+		strcat(trend_dir_str_array[num_joints_ * num_weights_], "idx");
+	}
+}
 
-		sprintf(tmp_dir, "descriptors/%d.bin", idx);
-		strcpy(input_dir, common_data_prefix_);
-		strcat(input_dir, tmp_dir);
-		FileIO::ReadMatFloat(descriptors, num_rows, num_cols, input_dir);
+void Loader::LoadLearningRates(Transform& transform) // empty parameter, need to be specialized
+{
+	char input_dir[400];	
+	int n_w = 1;
+	cv::Mat rates = cv::Mat::zeros(2, 1, CV_64F);
+	sprintf(input_dir, "D:/Document/HKUST/Year 5/Research/Solutions/unified_framework/input/rate_%d.bin", trial_id_);
+	FileIO::ReadMatDouble(rates, 2, 1, input_dir);
+	// need to write set learning rates routine here
+	transform.set_w_rate(rates.at<double>(0, 0));
+	transform.set_w_natural_rate(rates.at<double>(1, 0));
+	std::cout << "learning rates: ";
+	for(int i = 0; i < 2; i++)
+		std::cout << rates.at<double>(i, 0) << " ";
+	std::cout << std::endl;	
+}
 
-		sprintf(tmp_dir, "descriptors/%d_pt.bin", idx);
-		strcpy(input_dir, common_data_prefix_);
-		strcat(input_dir, tmp_dir);		
-		FileIO::ReadMatFloat(key_points, num_rows, 2, input_dir);
+void Loader::LoadProprioception(int train_data_size, int test_data_size, cv::Mat& train_prop, cv::Mat& test_prop, cv::Mat& home_prop, cv::Mat& train_target_idx, cv::Mat& test_target_idx, const cv::Mat& joint_idx)
+{
+	char input_dir[400];
+	char prop_dir[40];
+	int num_joints = train_prop.cols;
+	
+	for(int i = 0; i < num_joints; i++)
+	{
+		if(train_data_size != 0)
+		{
+			cv::Mat p_tmp_train = cv::Mat::zeros(train_data_size, 1, CV_64F);
+			strcpy(input_dir, common_data_prefix_);
+			sprintf(prop_dir, "train_p%d.bin", (int)joint_idx.at<double>(i, 0));
+			strcat(input_dir, prop_dir);	
+			FileIO::ReadFloatMatToDouble(p_tmp_train, train_data_size, 1, input_dir);
+			p_tmp_train.copyTo(train_prop.colRange(i, i + 1));
+		}
 
-		descriptors_list.push_back(descriptors);
-		key_points_list.push_back(key_points);
-
-		if(idx % 100 == 1)
-			std::cout << "current frame: " << idx << std::endl;
+		if(test_data_size != 0)
+		{
+			cv::Mat p_tmp_test = cv::Mat::zeros(test_data_size, 1, CV_64F);
+			strcpy(input_dir, common_data_prefix_);
+			sprintf(prop_dir, "test_p%d.bin", (int)joint_idx.at<double>(i, 0));
+			strcat(input_dir, prop_dir);	
+			FileIO::ReadFloatMatToDouble(p_tmp_test, test_data_size, 1, input_dir);
+			p_tmp_test.copyTo(test_prop.colRange(i, i + 1));
+		}
 	}
 	
-}
-
-// load explained variance
-void Loader::LoadProprioception(int num_train_data, int num_test_data, cv::Mat& train_prop, cv::Mat& test_prop, cv::Mat& home_prop, cv::Mat& train_target_idx, cv::Mat& test_target_idx)
-{
-	char input_dir[400];
-	cv::Mat p_tmp_train = cv::Mat::zeros(num_train_data, 1, CV_64F);
-	strcpy(input_dir, common_data_prefix_);
-	strcat(input_dir, "train_p0.bin");	
-	FileIO::ReadFloatMatToDouble(p_tmp_train, num_train_data, 1, input_dir);
-	// FileIO::ReadMatFloat(p_tmp_train, num_train_data, 1, "D:/Document/HKUST/Year 5/Research/Data/Arm Images/feb 22 2014/train_p0.bin");
-	p_tmp_train.copyTo(train_prop.colRange(0, 1));
-	strcpy(input_dir, common_data_prefix_);
-	strcat(input_dir, "train_p3.bin");
-	FileIO::ReadFloatMatToDouble(p_tmp_train, num_train_data, 1, input_dir);
-	// FileIO::ReadMatFloat(p_tmp_train, num_train_data, 1, "D:/Document/HKUST/Year 5/Research/Data/Arm Images/feb 22 2014/train_p3.bin");
-	p_tmp_train.copyTo(train_prop.colRange(1, 2));
-
-	cv::Mat p_tmp_test = cv::Mat::zeros(num_test_data, 1, CV_64F);
-	strcpy(input_dir, common_data_prefix_);
-	strcat(input_dir, "test_p0.bin");	
-	FileIO::ReadFloatMatToDouble(p_tmp_test, num_test_data, 1, input_dir);
-	// FileIO::ReadMatFloat(p_tmp_test, num_test_data, 1, "D:/Document/HKUST/Year 5/Research/Data/Arm Images/feb 22 2014/test_p0.bin");
-	p_tmp_test.copyTo(test_prop.colRange(0, 1));
-	strcpy(input_dir, common_data_prefix_);
-	strcat(input_dir, "test_p3.bin");
-	FileIO::ReadFloatMatToDouble(p_tmp_test, num_test_data, 1, input_dir);
-	// FileIO::ReadMatFloat(p_tmp_test, num_test_data, 1, "D:/Document/HKUST/Year 5/Research/Data/Arm Images/feb 22 2014/test_p3.bin");
-	p_tmp_test.copyTo(test_prop.colRange(1, 2));
-  
-	cv::Mat p_tmp_home = cv::Mat::zeros(2, 1, CV_64F);
 	strcpy(input_dir, common_data_prefix_);
 	strcat(input_dir, "prop_home.bin");	
-	FileIO::ReadFloatMatToDouble(p_tmp_home, 2, 1, input_dir);
-	// FileIO::ReadMatFloat(p_tmp_home, 2, 1, "D:/Document/HKUST/Year 5/Research/Data/Arm Images/feb 22 2014/prop_home.bin");
-	home_prop = p_tmp_home.t();
-	std::cout << "home prop: " << home_prop.at<double>(0, 0) << " " << home_prop.at<double>(0, 1) << std::endl;
+	FileIO::ReadFloatMatToDouble(home_prop, 1, num_joints, input_dir);
 	
 	// train frame index
-	strcpy(input_dir, common_data_prefix_);
-	strcat(input_dir, "train_prop_idx.bin");	
-	FileIO::ReadFloatMatToDouble(train_target_idx, num_train_data, 1, input_dir);
-	// FileIO::ReadMatFloat(train_target_idx, num_train_data, 1, "D:/Document/HKUST/Year 5/Research/Data/Arm Images/feb 22 2014/train_prop_idx.bin");
+	if(train_data_size != 0)
+	{
+		strcpy(input_dir, common_data_prefix_);
+		strcat(input_dir, "train_prop_idx.bin");	
+		FileIO::ReadFloatMatToDouble(train_target_idx, train_data_size, 1, input_dir);
+	}
 	// test frame index
-	strcpy(input_dir, common_data_prefix_);
-	strcat(input_dir, "test_prop_idx.bin");	
-	FileIO::ReadFloatMatToDouble(test_target_idx, num_test_data, 1, input_dir);
-	// FileIO::ReadMatFloat(test_target_idx, num_test_data, 1, "D:/Document/HKUST/Year 5/Research/Data/Arm Images/feb 22 2014/test_prop_idx.bin");
+	if(test_data_size != 0)
+	{
+		strcpy(input_dir, common_data_prefix_);
+		strcat(input_dir, "test_prop_idx.bin");	
+		FileIO::ReadFloatMatToDouble(test_target_idx, test_data_size, 1, input_dir);
+	}
 }
 
-void Loader::RecordSiftKeyPoints()
-{
-	char input_dir[400];
-	char output_dir[400];
+void Loader::LoadPointCloud(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, pcl::PCDReader& reader, int idx)
+{	
 	char tmp_dir[40];
-	strcpy(input_dir, common_data_prefix_);
-	strcat(input_dir, "num_data.bin");
-	cv::Mat num_data = cv::Mat::zeros(2, 1, CV_64F);
-	FileIO::ReadMatDouble(num_data, 2, 1, input_dir);
-	int num_train_data = (int)num_data.at<double>(0, 0); // 16400 * 19 / 20; // 17100; // 20250; // 17100; // 20250; // 20880; // 20250; // 17280; // 9900; // 18000;
-	int num_test_data = (int)num_data.at<double>(1, 0);
-
-	int start_frame = 0; // 16401; // 19201;
-	int end_frame = num_train_data + num_test_data; // 20000; // 19000; // 23247; // 19228; // 11374;
-	int image_width = 640;
-	int image_height = 480;
-	cv::Mat curr_img;
-	cv::Mat mask;
-	cv::Mat descriptor;
-	cv::SiftFeatureDetector sift_detector(0, 3, 0.04, 10, 1.2);
-    cv::FlannBasedMatcher matcher;
-    cv::SiftDescriptorExtractor sift_extractor;	
-	std::vector<cv::KeyPoint> key_point_list;
-
-	// mask...
-	mask = cv::Mat::zeros(image_height, image_width, CV_64F);
-	sprintf(tmp_dir, "mask.bin");
+	char input_dir[400];
+	sprintf(tmp_dir, "pcd/%d.pcd", idx);
 	strcpy(input_dir, common_data_prefix_);
 	strcat(input_dir, tmp_dir);
-	FileIO::ReadFloatMatToDouble(mask, mask.rows, mask.cols, input_dir);
-	// "D:/Document/HKUST/Year 5/Research/Data/Arm Images/march_11_2014/mask.bin"
-	mask.convertTo(mask, CV_8UC1);		
-	//cv::imshow("mask", mask); // show ellipse
-	//cv::waitKey(0);
-	for(int frame_idx = start_frame; frame_idx <= end_frame; frame_idx++)
-	{
-		sprintf(tmp_dir, "images/%d.pgm", frame_idx);
-		strcpy(input_dir, common_data_prefix_);
-		strcat(input_dir, tmp_dir);
-		curr_img = cv::imread(input_dir, CV_LOAD_IMAGE_GRAYSCALE);				
-		sift_detector.detect(curr_img, key_point_list); //  , mask);//, mask); // , evarBinary); // evDstBinaryCurr);
-		sift_extractor.compute(curr_img, key_point_list, descriptor);
-		// recording
-		// assign key points value
-		cv::Mat key_point_matrix = cv::Mat::zeros(descriptor.rows, 2, CV_32F);
-		cv::Mat num_cols = cv::Mat::zeros(1, 1, CV_32F);
-        cv::Mat num_rows = cv::Mat::zeros(1, 1, CV_32F);
-		num_rows.at<float>(0, 0) = descriptor.rows;
-        num_cols.at<float>(0, 0) = descriptor.cols;
-        for(int i = 0; i < descriptor.rows; i++)
-		{
-			key_point_matrix.at<float>(i, 0) = key_point_list[i].pt.x;
-			key_point_matrix.at<float>(i, 1) = key_point_list[i].pt.y;
-        }
-		sprintf(tmp_dir, "descriptors/%d_w.bin", frame_idx);
-		strcpy(output_dir, common_data_prefix_);
-		strcat(output_dir, tmp_dir);
-		// sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Data/Arm Images/feb 22 2014/descriptors/%d_w.bin", frame_idx);
-		FileIO::WriteMatFloat(num_cols, 1, 1, output_dir);        
-		sprintf(tmp_dir, "descriptors/%d_h.bin", frame_idx);
-		strcpy(output_dir, common_data_prefix_);
-		strcat(output_dir, tmp_dir);
-        // sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Data/Arm Images/feb 22 2014/descriptors/%d_h.bin", frame_idx);
-		FileIO::WriteMatFloat(num_rows, 1, 1, output_dir);
-		sprintf(tmp_dir, "descriptors/%d_pt.bin", frame_idx);
-		strcpy(output_dir, common_data_prefix_);
-		strcat(output_dir, tmp_dir);
-        // sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Data/Arm Images/feb 22 2014/descriptors/%d_pt.bin", frame_idx);
-		FileIO::WriteMatFloat(key_point_matrix, key_point_matrix.rows, key_point_matrix.cols, output_dir);
-		sprintf(tmp_dir, "descriptors/%d.bin", frame_idx);
-		strcpy(output_dir, common_data_prefix_);
-		strcat(output_dir, tmp_dir);
-        // sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Data/Arm Images/feb 22 2014/descriptors/%d.bin", frame_idx);
-        FileIO::WriteMatFloat(descriptor, descriptor.rows, descriptor.cols, output_dir);
+	reader.read(input_dir, *cloud);	
+}
 
-		if(frame_idx % 100 == 1)
-			std::cout << "current frame: " << frame_idx << std::endl;
+void Loader::LoadBinaryPointCloud(cv::Mat& cloud, int idx)
+{	
+	char tmp_dir[40];
+	char input_dir[400];
+	sprintf(tmp_dir, "binary/size_%d.bin", idx);
+	strcpy(input_dir, common_data_prefix_);
+	strcat(input_dir, tmp_dir);
+	cv::Mat size_mat = cv::Mat::zeros(1, 1, CV_64F);
+	FileIO::ReadMatDouble(size_mat, 1, 1, input_dir);
+	int cloud_size = size_mat.at<double>(0, 0);	
+	int dim = 4;
+	cloud = cv::Mat::ones(cloud_size, dim, CV_64F);	
+	sprintf(tmp_dir, "binary/%d.bin", idx);
+	strcpy(input_dir, common_data_prefix_);
+	strcat(input_dir, tmp_dir);
+	FileIO::ReadMatDouble(cloud.colRange(0, dim - 1), cloud_size, dim - 1, input_dir);		
+}
+
+void Loader::SavePointCloudAsBinaryMat(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, int idx)
+{	
+	char tmp_dir[40];
+	char output_dir[400];
+	int dim = 3;	
+	int cloud_size = cloud->points.size();
+	cv::Mat cloud_mat = cv::Mat::zeros(cloud_size, dim, CV_64F);
+	for(int i = 0; i < cloud_size; i++)
+	{
+		cloud_mat.at<double>(i, 0) = cloud->points[i].x;
+		cloud_mat.at<double>(i, 1) = cloud->points[i].y;
+		cloud_mat.at<double>(i, 2) = cloud->points[i].z;
 	}
+	sprintf(tmp_dir, "binary/%d.bin", idx);
+	strcpy(output_dir, common_data_prefix_);
+	strcat(output_dir, tmp_dir);
+	FileIO::WriteMatDouble(cloud_mat, cloud_size, dim, output_dir);
+	// save size...
+	sprintf(tmp_dir, "binary/size_%d.bin", idx);
+	strcpy(output_dir, common_data_prefix_);
+	strcat(output_dir, tmp_dir);
+	cv::Mat size_mat = cv::Mat::zeros(1, 1, CV_64F);
+	size_mat.at<double>(0, 0) = cloud_size;
+	FileIO::WriteMatDouble(size_mat, 1, 1, output_dir);
+	
 }

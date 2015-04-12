@@ -1,443 +1,546 @@
 #include "../inc/transform.h"
+#include "../inc/loader.h"
 
-Transform::Transform(double initial_x, double initial_y, double initial_long_axis, double initial_short_axis, double initial_angle) : 
-	ini_x_(initial_x), 
-	ini_y_(initial_y),
-	ini_sx_(initial_long_axis),
-	ini_sy_(initial_short_axis),
-	ini_phi_(initial_angle)
+COLOUR GetColour(double v, double vmin, double vmax)
 {
-	input_dim_ = 10;
-	output_dim_ = 1;
-	transform_dim_ = 3;
+    COLOUR c = {1.0,1.0,1.0}; // white
+    double dv;
 
-	alpha_ = 0.2; // randomly picked learning rate...
+    if (v < vmin)
+        v = vmin;
+    if (v > vmax)
+        v = vmax;
 
-	// initial parameters
-	/*ini_x_ = 218; 
-	ini_y_ = 230; 
-	ini_phi_ = 1.0 * Pi / 8.5; 
-	ini_sx_ = 30; 
-	ini_sy_ = 22;  */
+    dv = vmax - vmin;
 
-	w_x_rate_ = 0;
-	w_y_rate_ = 0;
-	w_angle_rate_ = 0;
-	w_sx_rate_ = 0;
-	w_sy_rate_ = 0;
+    if (v < (vmin + 0.25 * dv)) 
+    {
+        c.r = 0;
+        c.g = 4 * (v - vmin) / dv;
+    }
+    else if (v < (vmin + 0.5 * dv)) 
+    {
+        c.r = 0;
+        c.b = 1 + 4 * (vmin + 0.25 * dv - v) / dv;
+    }
+    else if (v < (vmin + 0.75 * dv)) 
+    {
+        c.r = 4 * (v - vmin - 0.5 * dv) / dv;
+        c.b = 0;
+    }
+    else
+    {
+        c.g = 1 + 4 * (vmin + 0.75 * dv - v) / dv;
+        c.b = 0;
+    }
 
-	w_x_ = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
-	w_y_ = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
-	w_phi_ = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
-	w_sx_ = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
-	w_sy_ = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
+    return c;
+}
 
-	w_x_grad_ = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
-	w_y_grad_ = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
-	w_phi_grad_ = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
-	w_sx_grad_ = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
-	w_sy_grad_ = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
+Transform::Transform(int transform_dim, int num_joints, double normal_learning_rate)
+{
+    // 
+    feature_dim_ = pow(3.0, num_joints) - 1;
+    transform_dim_ = transform_dim;
+    num_weights_ = transform_dim_ * (transform_dim_ - 1);
+    num_joints_ = num_joints;
+    // learning rates
+    w_rate_ = normal_learning_rate; 
+    w_natural_rate_ = 2e-5;
+    w_ = std::vector<cv::Mat>(num_joints_);
+    w_grad_ = std::vector<cv::Mat>(num_joints_);    
+    transform_inv_ = std::vector<cv::Mat>(num_joints_);
+    transform_ = std::vector<cv::Mat>(num_joints_);
+    transform_elements_ = std::vector<cv::Mat>(num_joints_);
+    
+    for(int i = 0; i < num_joints_; i++)
+    {
+        w_[i] = cv::Mat::zeros(num_weights_, feature_dim_, CV_64F);
+        w_grad_[i] = cv::Mat::zeros(num_weights_, feature_dim_, CV_64F);        
+        transform_inv_[i] = cv::Mat::eye(transform_dim_, transform_dim_, CV_64F);
+        transform_[i] = cv::Mat::eye(transform_dim_, transform_dim_, CV_64F);
+    }
+    // initialize weights...
+    double weight_range = 0.0001;
+    // initialize all the weights
+    for(int i = 0; i < num_joints_; i++)
+		cv::randu(w_[i], cv::Scalar::all(-weight_range), cv::Scalar::all(weight_range));
 
-	feature_ = cv::Mat::zeros(input_dim_, output_dim_, CV_64F);
-	
-	scaling_inv_ = cv::Mat::zeros(transform_dim_, transform_dim_, CV_64F);
-	rotation_inv_ = cv::Mat::zeros(transform_dim_, transform_dim_, CV_64F);
-	translate_inv_ = cv::Mat::zeros(transform_dim_, transform_dim_, CV_64F);
-	transform_inv_ = cv::Mat::zeros(transform_dim_, transform_dim_, CV_64F);
-	prev_transform_inv_ = cv::Mat::zeros(transform_dim_, transform_dim_, CV_64F);
+    average_norm_ = std::vector<double>(num_joints_);
+    ini_norm_ = std::vector<double>(num_joints_);
+    lambda_ = 0.2;
+    rejection_threshold_ = 0.1;
 
-	transform_para_ = cv::Mat::zeros(5, 1, CV_64F);
+    /*viewer_ = boost::shared_ptr<pcl::visualization::PCLVisualizer>(new pcl::visualization::PCLVisualizer("cloud Viewer"));
+    viewer_->setBackgroundColor(0, 0, 0);   
+    viewer_->initCameraParameters();*/
+}
 
-	// set initial inv transformation
-	CalcTransformMatrixInv(feature_, w_x_, w_y_, w_phi_, w_sx_, w_sy_);
+std::vector<cv::Mat> Transform::get_transform()
+{
+	return transform_;
+}
 
-	std::random_device rd;
-	std::mt19937 engine_uniform_rand(rd());
-	double weight_range = 0.0001;
-	std::uniform_real_distribution<double> uniform_rand(-weight_range, weight_range);
-	// initialize all the weights
-	for(int p = 0; p < output_dim_; p++)
-	{
-		for(int q = 0; q < input_dim_; q++)
+void Transform::CalcTransformation(cv::Mat& feature)
+{
+    for(int i = 0; i < num_joints_; i++)
+    {
+        transform_elements_[i] = w_[i] * feature;       
+		SetTransformationByElements(transform_[i], transform_elements_[i]);
+		cv::invert(transform_[i], transform_inv_[i]);
+	}
+}
+
+void Transform::SetTransformationByElements(cv::Mat& transform, const cv::Mat& elements)
+{
+	int dim_transform = transform.rows;
+	cv::Mat identity = cv::Mat::eye(dim_transform, dim_transform, CV_64F);
+	transform.rowRange(0, dim_transform - 1) = identity.rowRange(0, dim_transform - 1) + elements.reshape(1, transform_dim_ - 1);
+}
+
+void Transform::TransformCloud(const std::vector<cv::Mat>& input_cloud, const std::vector<cv::Mat>& transforms, std::vector<cv::Mat>& output_cloud)
+{
+	for(int i = 0; i < num_joints_; i++)
+		output_cloud[i] = input_cloud[i] * transforms[i].t();          
+}
+
+void Transform::CalculateGradient(const std::vector<cv::Mat>& matched_target_cloud, 
+								  const std::vector<cv::Mat>& prediction_cloud, 
+								  const std::vector<cv::Mat>& query_cloud, 
+								  const cv::Mat& feature)
+{
+    // the cloud should be n by 4...        
+	int dim_transform = query_cloud[0].cols;
+    for(int i = 0; i < num_joints_; i++)
+    {
+		if(prediction_cloud[i].rows != 0)
 		{
-			w_x_.at<double>(p, q) = uniform_rand(engine_uniform_rand);
-			w_y_.at<double>(p, q) = uniform_rand(engine_uniform_rand);
-			w_phi_.at<double>(p, q) = uniform_rand(engine_uniform_rand);
-			w_sx_.at<double>(p, q) = uniform_rand(engine_uniform_rand);
-			w_sy_.at<double>(p, q) = uniform_rand(engine_uniform_rand);
+			cv::Mat diff, transform_grad;      
+			diff = prediction_cloud[i] - matched_target_cloud[i];
+			transform_grad = 1.0 / query_cloud[i].rows * diff.colRange(0, dim_transform - 1).t() * query_cloud[i];
+			transform_grad = transform_grad.reshape(1, num_weights_);
+			w_grad_[i] = transform_grad * feature.t();
 		}
 	}
-
 }
 
-
-// set inverse transformation
-void Transform::set_translate_inv(cv::Mat& feature, cv::Mat& w_x, cv::Mat& w_y)
+void Transform::SegmentationAndUpdateFixedHomePos(std::vector<cv::Mat>& home_cloud, cv::Mat& query_cloud, cv::Mat& feature, int iteration_count)
 {
-	cv::Mat tmp;
-	translate_inv_.at<double>(0, 0) = 1.0;
-	translate_inv_.at<double>(1, 1) = 1.0;
-	translate_inv_.at<double>(2, 2) = 1.0;
-	tmp = w_x * feature;
-	translate_inv_.at<double>(0, 2) = -(ini_x_ + tmp.at<double>(0, 0));
-	transform_para_.at<double>(0, 0) = tmp.at<double>(0, 0); // shift x
-	tmp = w_y * feature;
-	translate_inv_.at<double>(1, 2) = -(ini_y_ + tmp.at<double>(0, 0));
-	transform_para_.at<double>(1, 0) = tmp.at<double>(0, 0); // shift y
+    cv::Mat target_cloud, transformed_cloud;    
+    int query_cloud_size = query_cloud.rows;
+    int cloud_dim = home_cloud[0].cols;
+    std::vector<cv::Mat> indices(num_joints_);
+    std::vector<cv::Mat> min_dists(num_joints_);    
+    int p_rates = 1e-1;
+
+    // match different clouds, transformed by different weights, with the home cloud template...
+	cv::flann::Index kd_trees(home_cloud_template_float_, cv::flann::KDTreeIndexParams(4), cvflann::FLANN_DIST_EUCLIDEAN); // build kd tree 
+    for(int i = 0; i < num_joints_; i++)
+    {       
+        indices[i] = cv::Mat::zeros(query_cloud_size, 1, CV_32S);
+        min_dists[i] = cv::Mat::zeros(query_cloud_size, 1, CV_32F);
+        home_cloud[i].convertTo(transformed_cloud, CV_32F); 		        
+        kd_trees.knnSearch(transformed_cloud, indices[i], min_dists[i], 1, cv::flann::SearchParams(64)); // kd tree search
+    }
+
+    /************* segmentation based on closest neighbor and update the probability according to distance *********************/
+
+    // first accumulate the data...    
+    for(int i = 0; i < query_cloud_size; i++)
+    {
+		int curr_idx_0 = indices[0].at<int>(i, 0);
+		int curr_idx_1 = indices[1].at<int>(i, 0);
+		// two joints here
+		if(min_dists[0].at<float>(i, 0) < min_dists[1].at<float>(i, 0))
+			vote_accumulation_.at<double>(curr_idx_0, 0) = vote_accumulation_.at<double>(curr_idx_0, 0) + 1;
+		else
+			vote_accumulation_.at<double>(curr_idx_0, 1) = vote_accumulation_.at<double>(curr_idx_0, 1) + 1;        
+    }
+
+    for(int i = 0; i < home_cloud_template_.rows; i++)
+    {
+		if(vote_accumulation_.at<double>(i, 0) == 0 && vote_accumulation_.at<double>(i, 1) == 0)
+		{
+			home_cloud_label_.at<double>(i, 0) = 0.5; home_cloud_label_.at<double>(i, 1) = 0.5;
+		}
+		else if(vote_accumulation_.at<double>(i, 0) == 0)
+		{
+			home_cloud_label_.at<double>(i, 0) = 0; home_cloud_label_.at<double>(i, 1) = 1;
+		}
+		else if(vote_accumulation_.at<double>(i, 1) == 0)
+		{
+			home_cloud_label_.at<double>(i, 0) = 1; home_cloud_label_.at<double>(i, 1) = 0;
+		}
+		else
+		{
+			double sum = vote_accumulation_.at<double>(i, 0) + vote_accumulation_.at<double>(i, 1);
+			home_cloud_label_.at<double>(i, 0) = vote_accumulation_.at<double>(i, 0) / sum;
+			home_cloud_label_.at<double>(i, 1) = vote_accumulation_.at<double>(i, 1) / sum;
+		}       
+    }
+
+    // home_cloud_label_ = home_cloud_label_ + p_rates * (curr_probability - home_cloud_label_);
+
+	if(iteration_count % 500 == 1)
+    {       
+        // just display the query cloud...		
+		pcl::PointCloud<pcl::PointXYZRGB>::Ptr colored_template;        
+		colored_template.reset(new pcl::PointCloud<pcl::PointXYZRGB>());
+		// colored_template->resize(home_cloud_template_.rows);
+		for(int i = 0; i < home_cloud_template_.rows; i++)
+		{
+			pcl::PointXYZRGB point;
+			point.x = home_cloud_template_.at<double>(i, 0);
+			point.y = home_cloud_template_.at<double>(i, 1);
+			point.z = home_cloud_template_.at<double>(i, 2);
+			COLOUR c = GetColour(home_cloud_label_.at<double>(i, 0), 0.0, 1.0);
+			point.r = c.r * 255.0;
+			point.g = c.g * 255.0;
+			point.b = c.b * 255.0;
+
+			colored_template->push_back(point);						
+		}                
+		pcl::visualization::PointCloudColorHandlerRGBField<pcl::PointXYZRGB> rgb(colored_template);
+        if(iteration_count == 1)
+			viewer_->addPointCloud<pcl::PointXYZRGB>(colored_template, rgb, "template");        
+        else
+            viewer_->updatePointCloud<pcl::PointXYZRGB>(colored_template, rgb, "template");
+        
+        viewer_->spinOnce(10);
+    }
+
+	std::vector<int> segmentation_count(num_joints_);
+    std::vector<cv::Mat> segmented_target_cloud(num_joints_);
+    std::vector<cv::Mat> segmented_transformed_cloud(num_joints_);
+    std::vector<cv::Mat> segmented_query_cloud(num_joints_);
+    std::vector<cv::Mat> segmented_idx(num_joints_);
+    // pre allocate
+	std::cout << "pre-allocate..." << std::endl;
+    for(int i = 0; i < num_joints_; i++)
+    {
+        segmentation_count[i] = 0; // query_cloud.rows;     
+        segmented_idx[i] = cv::Mat::zeros(query_cloud_size, 2, CV_64F); // first column original idx, second column matched idx
+    }
+    // get the data... only work for two joints here...
+	std::cout << "segment..." << std::endl;
+    for(int i = 0; i < query_cloud_size; i++)
+    {
+        int min_idx = 0;
+		// this line has bug...
+		if(home_cloud_label_.at<double>(i, 0) > home_cloud_label_.at<double>(i, 1))
+			min_idx = 0;
+		else
+			min_idx = 1;
+        int pos = segmentation_count[min_idx];
+        segmented_idx[min_idx].at<double>(pos, 0) = i; 
+		segmented_idx[min_idx].at<double>(pos, 1) = indices[min_idx].at<int>(i, 0);          
+        segmentation_count[min_idx]++;
+    }   
+	// update...
+	std::cout << "separate data..." << std::endl;
+    for(int i = 0; i < num_joints_; i++)
+    {
+        segmented_target_cloud[i] = cv::Mat::zeros(segmentation_count[i], cloud_dim, CV_64F);
+        segmented_transformed_cloud[i] = cv::Mat::zeros(segmentation_count[i], cloud_dim, CV_64F);
+        segmented_query_cloud[i] = cv::Mat::zeros(segmentation_count[i], cloud_dim, CV_64F);
+        for(int j = 0; j < segmentation_count[i]; j++)
+        {
+            int query_pos = segmented_idx[i].at<double>(j, 0);
+            int matched_pos = segmented_idx[i].at<double>(j, 1);
+			if(matched_pos >= home_cloud_template_.rows || j >= segmented_transformed_cloud[i].rows || query_pos >= home_cloud[i].rows)
+				std::cout << "matched pos not correct..." << std::endl;
+            home_cloud[i].rowRange(query_pos, query_pos + 1).copyTo(segmented_transformed_cloud[i].rowRange(j, j + 1));
+            query_cloud.rowRange(query_pos, query_pos + 1).copyTo(segmented_query_cloud[i].rowRange(j, j + 1));
+			home_cloud_template_.rowRange(matched_pos, matched_pos + 1).copyTo(segmented_target_cloud[i].rowRange(j, j + 1));
+        }
+    }
+
+
+    // CalcGradient(matched_template, home_cloud, query_cloud_list, feature, matched_probabilities);
+	std::cout << "calculating gradient..." << std::endl;
+	// CalcGradient(segmented_target_cloud, segmented_transformed_cloud, segmented_query_cloud, feature, segmentation_count);
+	std::cout << "updating..." << std::endl;
+    Update(iteration_count);
 }
 
-void Transform::set_rotation_inv(cv::Mat& feature, cv::Mat& w_phi)
+//void Transform::ShowHomePoseLabel()
+//{
+//}
+
+void Transform::SetHomeCloud(std::vector<cv::Mat>& home_cloud)
 {
-	cv::Mat tmp;
-	tmp = w_phi * feature;
-	transform_para_.at<double>(2, 0) = tmp.at<double>(0, 0); // rotation angle
-	rotation_inv_.at<double>(0, 0) = cos(-(ini_phi_ + tmp.at<double>(0, 0)));
-	rotation_inv_.at<double>(0, 1) = -sin(-(ini_phi_ + tmp.at<double>(0, 0)));
-	rotation_inv_.at<double>(1, 0) = sin(-(ini_phi_ + tmp.at<double>(0, 0)));
-	rotation_inv_.at<double>(1, 1) = cos(-(ini_phi_ + tmp.at<double>(0, 0)));
-	rotation_inv_.at<double>(2, 2) = 1.0;
+    int num_points = home_cloud[0].rows;
+    double initial_probability = 1.0 / (double)num_joints_;	
+    // set initial cloud	
+	home_cloud_template_ = cv::Mat::zeros(num_points, home_cloud[0].cols, CV_64F);
+    home_cloud[0].copyTo(home_cloud_template_);
+    // establish the kd tree for nearest neighbor search
+    home_cloud_template_.convertTo(home_cloud_template_float_, CV_32F);
+    // kd_trees_ = cv::flann::Index(home_cloud_template_float_, cv::flann::KDTreeIndexParams(4), cvflann::FLANN_DIST_EUCLIDEAN); // build kd tree         
+    // set initial probability
+	home_cloud_label_ = cv::Mat::ones(num_points, num_joints_, CV_64F);
+    home_cloud_label_ = home_cloud_label_.mul(initial_probability);
+
+	// vote structures...
+	vote_accumulation_ = cv::Mat::zeros(num_points, num_joints_, CV_64F);	
 }
 
-void Transform::set_scaling_inv(cv::Mat& feature, cv::Mat& w_sx, cv::Mat& w_sy)
+void Transform::SegmentationAndUpdate(std::vector<cv::Mat>& prev_home_cloud, std::vector<cv::Mat>& home_cloud, cv::Mat& query_cloud, cv::Mat& feature, int iteration_count)
 {
-	cv::Mat tmp;
-	tmp = w_sx * feature;
-	scaling_inv_.at<double>(0, 0) = 1 / (ini_sx_ + tmp.at<double>(0, 0)); // delta with respect to 1
-	transform_para_.at<double>(3, 0) = tmp.at<double>(0, 0); // x scaling
-	tmp = w_sy * feature;
-	scaling_inv_.at<double>(1, 1) = 1 / (ini_sy_ + tmp.at<double>(0, 0)); // delta with respect to 1
-	transform_para_.at<double>(4, 0) = tmp.at<double>(0, 0); // y scaling
-	scaling_inv_.at<double>(2, 2) = 1.0;
+    // all home cloud suppose to be the whole cloud thus same size...
+
+    /************* nearest neighbor match part *********************/
+    
+    cv::Mat target_cloud, transformed_cloud;    
+    int query_cloud_size = query_cloud.rows;
+    int cloud_dim = home_cloud[0].cols;
+    std::vector<cv::Mat> indices(num_joints_);
+    std::vector<cv::Mat> min_dists(num_joints_);    
+
+    for(int i = 0; i < num_joints_; i++)
+    {       
+        indices[i] = cv::Mat::zeros(query_cloud_size, 1, CV_32S);
+        min_dists[i] = cv::Mat::zeros(query_cloud_size, 1, CV_32F);
+    }
+    // match different clouds, transformed by different weights...
+    // for(int i = 0; i < num_joints_; i++)
+    for(int i = 0; i < num_joints_; i++)
+    {
+        prev_home_cloud[i].convertTo(target_cloud, CV_32F); 
+        home_cloud[i].convertTo(transformed_cloud, CV_32F); 
+        cv::flann::Index kd_trees(target_cloud, cv::flann::KDTreeIndexParams(4), cvflann::FLANN_DIST_EUCLIDEAN); // build kd tree           
+        kd_trees.knnSearch(transformed_cloud, indices[i], min_dists[i], 1, cv::flann::SearchParams(64)); // kd tree search
+    }
+    // segment the clouds by minimum distance...
+    // the two segments are of the same length which is the length of the previous home cloud
+    // maybe use vector first and do a whole conversion at the end... that should be good...    
+    
+    /************* segmentation based on closest neighbor part *********************/
+        
+    std::vector<int> segmentation_count(num_joints_);
+    std::vector<cv::Mat> segmented_target_cloud(num_joints_);
+    std::vector<cv::Mat> segmented_transformed_cloud(num_joints_);
+    std::vector<cv::Mat> segmented_query_cloud(num_joints_);
+    std::vector<cv::Mat> segmented_idx(num_joints_);
+    // pre allocate
+    for(int i = 0; i < num_joints_; i++)
+    {
+        segmentation_count[i] = 0; // query_cloud.rows;     
+        segmented_idx[i] = cv::Mat::zeros(query_cloud_size, 2, CV_64F); // first column original idx, second column matched idx
+    }
+    // get the data...
+    for(int i = 0; i < query_cloud_size; i++)
+    {
+        int min_idx = 0;
+        double curr_min_dist = min_dists[0].at<float>(i, 0); 
+        for(int j = 1; j < num_joints_; j++)
+        {
+            // find the minimum...
+            if(min_dists[j].at<float>(i, 0) < curr_min_dist)
+            {
+                min_idx = j;
+                curr_min_dist = min_dists[j].at<float>(i, 0);
+            }
+        }       
+        int pos = segmentation_count[min_idx];
+        segmented_idx[min_idx].at<double>(pos, 0) = i; segmented_idx[min_idx].at<double>(pos, 1) = indices[min_idx].at<int>(i, 0);          
+        segmentation_count[min_idx]++;
+    }   
+    for(int i = 0; i < num_joints_; i++)
+    {
+        segmented_target_cloud[i] = cv::Mat::zeros(segmentation_count[i], cloud_dim, CV_64F);
+        segmented_transformed_cloud[i] = cv::Mat::zeros(segmentation_count[i], cloud_dim, CV_64F);
+        segmented_query_cloud[i] = cv::Mat::zeros(segmentation_count[i], cloud_dim, CV_64F);
+        for(int j = 0; j < segmentation_count[i]; j++)
+        {
+            int query_pos = segmented_idx[i].at<double>(j, 0);
+            int matched_pos = segmented_idx[i].at<double>(j, 1);
+            home_cloud[i].rowRange(query_pos, query_pos + 1).copyTo(segmented_transformed_cloud[i].rowRange(j, j + 1));
+            query_cloud.rowRange(query_pos, query_pos + 1).copyTo(segmented_query_cloud[i].rowRange(j, j + 1));
+            prev_home_cloud[i].rowRange(matched_pos, matched_pos + 1).copyTo(segmented_target_cloud[i].rowRange(j, j + 1));
+        }
+    }
+    
+    /******************* display segmented data... *********************/
+
+    if(iteration_count % 200 == 1)
+    {       
+        // just display the query cloud...
+        std::vector<pcl::PointCloud<pcl::PointXYZ>::Ptr> cloud_segments(num_joints_);   
+        for(int i = 0; i < num_joints_; i++)
+        {
+            if(segmentation_count[i] != 0)
+            {
+                char cloud_name[10];
+                sprintf(cloud_name, "%d", i);
+                COLOUR c = GetColour(i * 1.0 / (num_joints_ - 1) * num_joints_, 0, num_joints_);
+                cloud_segments[i] = pcl::PointCloud<pcl::PointXYZ>::Ptr(new pcl::PointCloud<pcl::PointXYZ>);                
+                Mat2PCD_Trans(segmented_query_cloud[i], cloud_segments[i]);     
+                pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> cloud_color(cloud_segments[i], c.r * 255, c.g * 255, c.b * 255);
+                if(iteration_count == 1)
+                    viewer_->addPointCloud<pcl::PointXYZ>(cloud_segments[i], cloud_color, cloud_name);
+                else
+                    viewer_->updatePointCloud<pcl::PointXYZ>(cloud_segments[i], cloud_color, cloud_name);               
+            }
+        }
+        viewer_->spinOnce(1);
+    }
+    
+    /************* weights update part **************/
+    // ReOrder_Trans(prev_home_cloud, segmented_target_cloud, indices);
+    /*for(int i = 0; i < num_joints_; i++)
+        query_cloud.copyTo(segmented_query_cloud[i]);*/
+    // CalcGradient(segmented_target_cloud, segmented_transformed_cloud, segmented_query_cloud, feature, segmentation_count);
+    // CalcGradient(segmented_target_cloud, segmented_transformed_cloud, segmented_query_cloud, feature, segmentation_count);
+    Update(iteration_count);
+    
 }
 
-void Transform::CalcTransformMatrixInv(cv::Mat& feature, cv::Mat& w_x, cv::Mat& w_y, cv::Mat& w_phi, cv::Mat& w_sx, cv::Mat& w_sy)
+void Transform::ReOrder_Trans(std::vector<cv::Mat>& input, std::vector<cv::Mat>& output, std::vector<cv::Mat>& input_indices)
 {
-	set_translate_inv(feature, w_x, w_y);
-	set_rotation_inv(feature, w_phi);
-	set_scaling_inv(feature, w_sx, w_sy);
-
-	transform_inv_ = scaling_inv_ * rotation_inv_ * translate_inv_; 
+    int size = output.size();
+    for(int i = 0; i < size; i++)
+    {
+        output[i] = cv::Mat::zeros(input_indices[i].rows, input[i].cols, CV_64F);
+        for(int p = 0; p < input_indices[i].rows; p++)
+            for(int q = 0; q < input[i].cols; q++)
+                output[i].at<double>(p, q) = input[i].at<double>(input_indices[i].at<int>(p, 0), q);        
+    }
 }
 
-cv::Mat Transform::EvaluateInvTransformation(cv::Mat& feature_float)
+void Transform::Mat2PCD_Trans(cv::Mat& cloud_mat, pcl::PointCloud<pcl::PointXYZ>::Ptr& cloud)
 {
-	for(int i = 0; i < input_dim_; i++)
-		feature_.at<double>(i, 0) = (double)feature_float.at<double>(i, 0);
-	CalcTransformMatrixInv(feature_, w_x_, w_y_, w_phi_, w_sx_, w_sy_);
-	return transform_para_;
+    int size = cloud_mat.rows;
+    std::vector<pcl::PointXYZ> points_vec(size);
+    cloud.reset(new pcl::PointCloud<pcl::PointXYZ>());
+    for(int i = 0; i < size; i++)
+    {
+        pcl::PointXYZ point;
+        point.x = cloud_mat.at<double>(i, 0);
+        point.y = cloud_mat.at<double>(i, 1);
+        point.z = cloud_mat.at<double>(i, 2);
+        cloud->push_back(point);
+    }   
 }
 
-// calculate the transformation
-cv::Mat Transform::TransformDataPointInv(cv::Mat& point, int curr_flag)
+void Transform::Rejection(cv::Mat& diff, cv::Mat& filtered_diff, cv::Mat& query_cloud, cv::Mat& filtered_query_cloud, double threshold)
 {
-	cv::Mat transformed_point;
-	if(curr_flag)
-		transformed_point = transform_inv_ * point;
-	else
-		transformed_point = prev_transform_inv_ * point;
-	return transformed_point;
-}
+    if(threshold != 0 && diff.rows > 10)
+    {
+        cv::Mat dist, idx, tmp_diff;
+        tmp_diff = diff.mul(diff);
+        cv::reduce(tmp_diff, dist, 1, CV_REDUCE_SUM);
+        cv::sqrt(dist, dist);
+        cv::sortIdx(dist, idx, CV_SORT_EVERY_COLUMN + CV_SORT_ASCENDING);
+        int count = (int)(dist.rows * (1 - threshold));
+        /*while(count < dist.rows && dist.at<double>(idx.at<int>(count, 0), 0) < threshold)
+            count++;*/
+        // std::cout << "original: " << diff.rows << " filtered: " << count << std::endl;
+        filtered_diff = cv::Mat::zeros(count, diff.cols, CV_64F);
+        filtered_query_cloud = cv::Mat::zeros(count, query_cloud.cols, CV_64F);
+        
+        for(int i = 0; i < count; i++)      
+        {
+            // diff
+            for(int m = 0; m < diff.cols; m++)
+                filtered_diff.at<double>(i, m) = diff.at<double>(idx.at<int>(i, 0), m);
+            // query_cloud      
+            for(int n = 0; n < query_cloud.cols; n++)
+                filtered_query_cloud.at<double>(i, n) = query_cloud.at<double>(idx.at<int>(i, 0), n);       
+        }
+    }
+    else
+    {
+        filtered_diff = cv::Mat::zeros(diff.rows, diff.cols, CV_64F);
+        diff.copyTo(filtered_diff);
+        filtered_query_cloud = cv::Mat::zeros(query_cloud.rows, query_cloud.cols, CV_64F);
+        query_cloud.copyTo(filtered_query_cloud);
+    }
 
-cv::Mat Transform::InterFrameTransformImg(cv::Mat& point)
-{
-	cv::Mat transformed_point;
-	cv::Mat transform;
-	cv::invert(transform_inv_, transform);	
-	transformed_point = transform * prev_transform_inv_ * point;			
-	return transformed_point;
-}
-
-// calculate gradients
-void Transform::CalcWXInvGradient(cv::Mat& transformed_point, cv::Mat& target_point, cv::Mat& feature)
-{
-	// points
-	double x_h = transformed_point.at<double>(0, 0);
-	double y_h = transformed_point.at<double>(1, 0);
-	double x_t = target_point.at<double>(0, 0);
-	double y_t = target_point.at<double>(1, 0);
-	// temporary values
-	cv::Mat tmp_sx = w_sx_ * feature;
-	cv::Mat tmp_sy = w_sy_ * feature;
-	cv::Mat tmp_phi = w_phi_ * feature;
-	double tmp_sx_val = ini_sx_ + tmp_sx.at<double>(0, 0);
-	double tmp_sy_val = ini_sy_ + tmp_sy.at<double>(0, 0);
-	double tmp_phi_val = ini_phi_ + tmp_phi.at<double>(0, 0);
-
-	double exp_error = GRADIENT_SCALE * exp(-0.5 * GRADIENT_SCALE * (pow(x_t - x_h, 2) + pow(y_t - y_h, 2)));
-
-	w_x_grad_ = feature.t() * exp_error * ((x_h - x_t) * (-cos(tmp_phi_val)) / tmp_sx_val + (y_h - y_t) * sin(tmp_phi_val) / tmp_sy_val) ;
-}
-
-void Transform::CalcWYInvGradient(cv::Mat& transformed_point, cv::Mat& target_point, cv::Mat& feature)
-{
-	// points
-	double x_h = transformed_point.at<double>(0, 0);
-	double y_h = transformed_point.at<double>(1, 0);
-	double x_t = target_point.at<double>(0, 0);
-	double y_t = target_point.at<double>(1, 0);
-	// temporary values
-	cv::Mat tmp_sx = w_sx_ * feature;
-	cv::Mat tmp_sy = w_sy_ * feature;
-	cv::Mat tmp_phi = w_phi_ * feature;
-	double tmp_sx_val = ini_sx_ + tmp_sx.at<double>(0, 0);
-	double tmp_sy_val = ini_sy_ + tmp_sy.at<double>(0, 0);
-	double tmp_phi_val = ini_phi_ + tmp_phi.at<double>(0, 0);
-
-	double exp_error = GRADIENT_SCALE * exp(-0.5 * GRADIENT_SCALE * (pow(x_t - x_h, 2) + pow(y_t - y_h, 2)));
-
-	w_y_grad_ = feature.t() * exp_error * ((x_h - x_t) * (-sin(tmp_phi_val)) / tmp_sx_val - (y_h - y_t) * cos(tmp_phi_val) / tmp_sy_val) ;
-	// w_y_grad_ = feature.t() * (y_h - y_t) * exp_error;
-}
-
-void Transform::CalcWPhiInvGradient(cv::Mat& original_point, cv::Mat& transformed_point, cv::Mat& target_point, cv::Mat& feature)
-{
-	double x_0 = original_point.at<double>(0, 0);
-	double y_0 = original_point.at<double>(1, 0);
-	double x_h = transformed_point.at<double>(0, 0);
-	double y_h = transformed_point.at<double>(1, 0);
-	double x_t = target_point.at<double>(0, 0);
-	double y_t = target_point.at<double>(1, 0);
-	double exp_error = GRADIENT_SCALE * exp(-0.5 * GRADIENT_SCALE * (pow(x_t - x_h, 2) + pow(y_t - y_h, 2)));
-
-	cv::Mat tmp_x = w_x_ * feature;
-	cv::Mat tmp_y = w_y_ * feature;
-	cv::Mat tmp_sx = w_sx_ * feature;
-	cv::Mat tmp_sy = w_sy_ * feature;
-	cv::Mat tmp_phi = w_phi_ * feature;
-	double tmp_x_val = ini_x_ + tmp_x.at<double>(0, 0);
-	double tmp_y_val = ini_y_ + tmp_y.at<double>(0, 0);
-	double tmp_sx_val = ini_sx_ + tmp_sx.at<double>(0, 0);
-	double tmp_sy_val = ini_sy_ + tmp_sy.at<double>(0, 0);
-	double tmp_phi_val = ini_phi_ + tmp_phi.at<double>(0, 0);
-
-	// expression of rotation weight gradient... need to check...
-	w_phi_grad_ = exp_error * feature.t() * ((x_h - x_t) * (1 / tmp_sx_val) * (-sin(tmp_phi_val) * x_0 + cos(tmp_phi_val) * y_0 + tmp_x_val * sin(tmp_phi_val) - tmp_y_val * cos(tmp_phi_val)) + 
-		(y_h - y_t) * (1 / tmp_sy_val) * (-cos(tmp_phi_val) * x_0 - sin(tmp_phi_val) * y_0 + tmp_x_val * cos(tmp_phi_val) + tmp_y_val * sin(tmp_phi_val)));
-
-	// w_phi_grad_ = exp_error * ((x_h - x_t) * (x_0 * tmp_sx_val * -sin(tmp_phi_val) * feature.t() - (y_0 * tmp_sy_val * cos(tmp_phi_val)) * feature.t()) + 
-	// 	(y_h - y_t) * (x_0 * tmp_sx_val * cos(tmp_phi_val) * feature.t() - (y_0 * tmp_sy_val * sin(tmp_phi_val)) * feature.t()));
 
 }
-
-void Transform::CalcWSxInvGradient(cv::Mat& original_point, cv::Mat& transformed_point, cv::Mat& target_point, cv::Mat& feature)
-{
-	double x_0 = original_point.at<double>(0, 0);
-	double y_0 = original_point.at<double>(1, 0);
-	double x_h = transformed_point.at<double>(0, 0);
-	double y_h = transformed_point.at<double>(1, 0);
-	double x_t = target_point.at<double>(0, 0);
-	double y_t = target_point.at<double>(1, 0);
-	double exp_error = GRADIENT_SCALE * exp(-0.5 * GRADIENT_SCALE * (pow(x_t - x_h, 2) + pow(y_t - y_h, 2)));
-
-	cv::Mat tmp_phi = w_phi_ * feature;
-	cv::Mat tmp_sx = w_sx_ * feature;
-	double tmp_phi_val = ini_phi_ + tmp_phi.at<double>(0, 0);	
-	double tmp_sx_val = ini_sx_ + tmp_sx.at<double>(0, 0);	
-
-	// expression of sx weight gradient
-	w_sx_grad_ = exp_error * ((x_h - x_t) * (-1 / tmp_sx_val) * x_h) * feature.t();
-
-}
-
-void Transform::CalcWSyInvGradient(cv::Mat& original_point, cv::Mat& transformed_point, cv::Mat& target_point, cv::Mat& feature)
-{
-	double x_0 = original_point.at<double>(0, 0);
-	double y_0 = original_point.at<double>(1, 0);
-	double x_h = transformed_point.at<double>(0, 0);
-	double y_h = transformed_point.at<double>(1, 0);
-	double x_t = target_point.at<double>(0, 0);
-	double y_t = target_point.at<double>(1, 0);
-	double exp_error = GRADIENT_SCALE * exp(-0.5 * GRADIENT_SCALE * (pow(x_t - x_h, 2) + pow(y_t - y_h, 2)));
-
-	cv::Mat tmp_phi = w_phi_ * feature;
-	cv::Mat tmp_sy = w_sy_ * feature;
-	double tmp_phi_val = ini_phi_ + tmp_phi.at<double>(0, 0);		
-	double tmp_sy_val = ini_sy_ + tmp_sy.at<double>(0, 0);	
-
-	// expression of sx weight gradient
-	w_sy_grad_ = exp_error * ((y_h - y_t) * (-1 / tmp_sy_val) * y_h) * feature.t();		
-}
-
-void Transform::CalcInvGradient(cv::Mat& original_point, cv::Mat& transformed_point, cv::Mat& target_point, cv::Mat& feature)
-{
-	CalcWXInvGradient(transformed_point, target_point, feature);
-	CalcWYInvGradient(transformed_point, target_point, feature);
-	CalcWPhiInvGradient(original_point, transformed_point, target_point, feature);
-	CalcWSxInvGradient(original_point, transformed_point, target_point, feature);
-	CalcWSyInvGradient(original_point, transformed_point, target_point, feature);
-}
-
-void Transform::CalcMiniBatchInvGradient(cv::Mat& original_point, cv::Mat& transformed_point, cv::Mat& target_point, cv::Mat& feature, int batch_count, int batch_idx)
-{
-	if(batch_idx == 0)
+void Transform::Update()
+{   
+	for(int i = 0; i < num_joints_; i++)
 	{
-		w_x_grad_batch_ = cv::Mat::zeros(batch_count, input_dim_, CV_64F);
-		w_y_grad_batch_ = cv::Mat::zeros(batch_count, input_dim_, CV_64F);
-		w_phi_grad_batch_ = cv::Mat::zeros(batch_count, input_dim_, CV_64F);
-		w_sx_grad_batch_ = cv::Mat::zeros(batch_count, input_dim_, CV_64F);
-		w_sy_grad_batch_ = cv::Mat::zeros(batch_count, input_dim_, CV_64F);
+		w_[i] = w_[i] - w_rate_ * w_grad_[i];
 	}
-	
-	CalcInvGradient(original_point, transformed_point, target_point, feature);
-
-	w_x_grad_.copyTo(w_x_grad_batch_.rowRange(batch_idx, batch_idx + 1));
-	w_y_grad_.copyTo(w_y_grad_batch_.rowRange(batch_idx, batch_idx + 1));
-	w_phi_grad_.copyTo(w_phi_grad_batch_.rowRange(batch_idx, batch_idx + 1));
-	w_sx_grad_.copyTo(w_sx_grad_batch_.rowRange(batch_idx, batch_idx + 1));
-	w_sy_grad_.copyTo(w_sy_grad_batch_.rowRange(batch_idx, batch_idx + 1));	
 }
 
-void Transform::UpdateWeightBatch()
-{
-	cv::reduce(w_x_grad_batch_, w_x_grad_, 0, CV_REDUCE_AVG);
-	cv::reduce(w_y_grad_batch_, w_y_grad_, 0, CV_REDUCE_AVG);
-	cv::reduce(w_phi_grad_batch_, w_phi_grad_, 0, CV_REDUCE_AVG);
-	cv::reduce(w_sx_grad_batch_, w_sx_grad_, 0, CV_REDUCE_AVG);
-	cv::reduce(w_sy_grad_batch_, w_sy_grad_, 0, CV_REDUCE_AVG);
 
-	w_x_ = w_x_ - w_x_rate_ * w_x_grad_;
-	w_y_ = w_y_ - w_y_rate_ * w_y_grad_;
-	w_phi_ = w_phi_ - w_angle_rate_ * w_phi_grad_;
-	w_sx_ = w_sx_ - w_sx_rate_ * w_sx_grad_;
-	w_sy_ = w_sy_ - w_sy_rate_ * w_sy_grad_;
+void Transform::Update(int iter)
+{   
+    for(int i = 0; i < num_joints_; i++)
+    {
+        double curr_norm = cv::norm(natural_w_grad_[i], cv::NORM_L2);
+        if(iter == 1)
+        {
+            ini_norm_[i] = curr_norm;
+            average_norm_[i] = curr_norm;       
+        }
+        else    
+            average_norm_[i] = (1 - lambda_) * average_norm_[i] + lambda_ * curr_norm;  
+        w_[i] = w_[i] - (w_rate_ * ini_norm_[i] / average_norm_[i]) * natural_w_grad_[i];
 
-	/*w_x_ = w_x_ - 0.32 * w_x_grad_;
-	w_y_ = w_y_ - 0.32 * w_y_grad_;
-	w_phi_ = w_phi_ - 4e-5 * w_phi_grad_;
-	w_sx_ = w_sx_ - 0.12 * w_sx_grad_;
-	w_sy_ = w_sy_ - 0.03 * w_sy_grad_;*/
+        // w_[i] = w_[i] - w_rate_ * w_grad_[i];
+    }
 }
 
 // copy to previous transformation
-void Transform::CopyToPrev()
+void Transform::CopyTransformToPrev()
 {
-	transform_inv_.copyTo(prev_transform_inv_);
+    for(int i = 0; i < num_joints_; i++)
+        transform_inv_[i].copyTo(prev_transform_inv_[i]);
 }
-
-void Transform::CheckInvGradient()
-{	
-	// assign feature value
-	char input_dir[400];
-	cv::Mat feature = cv::Mat::zeros(input_dim_, 1, CV_64F);
-	sprintf(input_dir, "D:/Document/HKUST/Year 5/Research/Solutions/expansion/test/feature.bin");
-	FileIO::ReadMatDouble(feature, input_dim_, 1, input_dir);
-	
-	// allocate data points
-	cv::Mat original_point = cv::Mat::zeros(transform_dim_, 1, CV_64F);
-	cv::Mat transformed_point = cv::Mat::zeros(transform_dim_, 1, CV_64F);
-	cv::Mat target_point = cv::Mat::zeros(transform_dim_, 1, CV_64F);
-	// numerical gradient
-	cv::Mat transformed_point_delta_1 = cv::Mat::zeros(transform_dim_, 1, CV_64F);
-	cv::Mat transformed_point_delta_2 = cv::Mat::zeros(transform_dim_, 1, CV_64F);
-	cv::Mat disturb = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
-	cv::Mat tmp_w;
-	double e_1 = 0;
-	double e_2 = 0;
-	double disturb_value = 0.001;
-	double numerical_gradient = 0;
-	double analytical_gradient = 0;
-	
-	target_point.at<double>(0, 0) = -0.3709615735; target_point.at<double>(1, 0) = -0.7597566886; target_point.at<double>(2, 0) = 1.0;	
-	original_point.at<double>(0, 0) = 213.607177734375; original_point.at<double>(1, 0) = 210.383468628; original_point.at<double>(2, 0) = 1.0;
-	// calculate the current feature vector
-	CalcTransformMatrixInv(feature, w_x_, w_y_, w_phi_, w_sx_, w_sy_);
-	// calculate the transformed point
-	transformed_point = TransformDataPointInv(original_point, 1);
-	// calculate analytical gradient
-	CalcInvGradient(original_point, transformed_point, target_point, feature);
-	// currently checking gradient for phi...
-	for(int i = 0; i < input_dim_; i++)
-	{
-		disturb = cv::Mat::zeros(output_dim_, input_dim_, CV_64F);
-		disturb.at<double>(0, i) = disturb_value;
-		tmp_w = w_phi_ + disturb;
-		CalcTransformMatrixInv(feature, w_x_, w_y_, tmp_w, w_sx_, w_sy_);
-		transformed_point_delta_1 = TransformDataPointInv(original_point, 1);
-		tmp_w = w_phi_ - disturb;
-		CalcTransformMatrixInv(feature, w_x_, w_y_, tmp_w, w_sx_, w_sy_);
-		transformed_point_delta_2 = TransformDataPointInv(original_point, 1);
-		// reset back...
-		CalcTransformMatrixInv(feature, w_x_, w_y_, w_phi_, w_sx_, w_sy_);
-		transformed_point = TransformDataPointInv(original_point, 1);
-		// calculate error
-		e_1 = 1 - exp(-0.5 * GRADIENT_SCALE * (pow(target_point.at<double>(0, 0) - transformed_point_delta_1.at<double>(0, 0), 2) +
-			pow(target_point.at<double>(1, 0) - transformed_point_delta_1.at<double>(1, 0), 2)));
-		e_2 = 1 - exp(-0.5 * GRADIENT_SCALE * (pow(target_point.at<double>(0, 0) - transformed_point_delta_2.at<double>(0, 0), 2) +
-			pow(target_point.at<double>(1, 0) - transformed_point_delta_2.at<double>(1, 0), 2)));
-		numerical_gradient = (e_1 - e_2) / (2 * disturb_value);
-		analytical_gradient = w_phi_grad_.at<double>(0, i);
-
-		std::cout << "iteration: " << i << std::endl;
-		std::cout << "analytical gradient: " << analytical_gradient << " " << "numerical gradient: " << numerical_gradient << std::endl;
-	}
-	
-}
-
-cv::Mat Transform::w_x()
+cv::Mat Transform::fisher_inv(int idx)
 {
-	return w_x_;
+    return fisher_inv_[idx];
 }
 
-cv::Mat Transform::w_y()
+cv::Mat Transform::natural_w_grad(int idx)
 {
-	return w_y_;
+    return natural_w_grad_[idx];
 }
 
-cv::Mat Transform::w_phi()
+cv::Mat Transform::w_grad(int idx)
 {
-	return w_phi_;
+    return w_grad_[idx];
 }
 
-cv::Mat Transform::w_sx()
+std::vector<cv::Mat> Transform::w_grad()
 {
-	return w_sx_;
+    return w_grad_;
 }
 
-cv::Mat Transform::w_sy()
+cv::Mat Transform::w(int idx)
 {
-	return w_sy_;
+    return w_[idx];
 }
 
-cv::Mat Transform::transform_inv()
+void Transform::set_w(cv::Mat& w, int idx)
 {
-	return transform_inv_;
+     w.copyTo(w_[idx]);
 }
 
-cv::Mat Transform::prev_transform_inv()
+cv::Mat Transform::get_w(int idx)
 {
-	return prev_transform_inv_;
+     return w_[idx];
 }
 
-void Transform::set_w_x(cv::Mat& w)
+void Transform::set_w_rate(double w_rate)
 {
-	 w.copyTo(w_x_);
+    w_rate_ = w_rate;   
 }
 
-void Transform::set_w_y(cv::Mat& w)
+void Transform::set_w_natural_rate(double natural_rate)
 {
-	w.copyTo(w_y_);
+    w_natural_rate_ = natural_rate;
 }
 
-void Transform::set_w_phi(cv::Mat& w)
+
+void Transform::set_fisher_inv()
 {
-	w.copyTo(w_phi_);
+    for(int i = 0; i < num_joints_; i++)
+        fisher_inv_[i] = cv::Mat::eye(feature_dim_ * num_weights_, feature_dim_ * num_weights_, CV_64F);
 }
 
-void Transform::set_w_sx(cv::Mat& w)
-{
-	w.copyTo(w_sx_);
-}
-
-void Transform::set_w_sy(cv::Mat& w)
-{
-	w.copyTo(w_sy_);
-}
-
-void Transform::SetLearningRates(double x_rate, double y_rate, double angle_rate, double sx_rate, double sy_rate)
-{
-	w_x_rate_ = x_rate;
-	w_y_rate_ = y_rate;
-	w_angle_rate_ = angle_rate;
-	w_sx_rate_ = sx_rate;
-	w_sy_rate_ = sy_rate;
-}

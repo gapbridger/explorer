@@ -44,10 +44,9 @@ private:
 	std::vector<cv::Mat> transform_elements_;
 
     cv::Mat home_cloud_label_;
-    cv::Mat vote_accumulation_;	
     cv::Mat home_cloud_template_;
     cv::Mat home_cloud_template_float_;
-    // cv::flann::Index kd_trees_;
+    cv::flann::Index kd_trees_;
 	cv::Mat tmp_;
 	// cv::Mat fisher_inv_;
 	
@@ -88,19 +87,15 @@ private:
 
 	boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer_;
 public:
-	Transform(int transform_dim_, int num_joints, double normal_learning_rate);	
+	Transform(int transform_dim_, int feature_dim_, int num_joints);	
 	void CalcTransformInv(cv::Mat& feature);
-	void CalcTransformation(cv::Mat& feature);
-	void SetTransformationByElements(cv::Mat& transform, const cv::Mat& elements);
-	void TransformCloud(const std::vector<cv::Mat>& input_cloud, const std::vector<cv::Mat>& transforms, std::vector<cv::Mat>& output_cloud);
-	void CalculateGradient(const std::vector<cv::Mat>& matched_target_cloud, const std::vector<cv::Mat>& prediction_cloud, const std::vector<cv::Mat>& query_cloud, const cv::Mat& feature);
-	std::vector<cv::Mat> get_transform();
+	void TransformDataInv(cv::Mat& input_cloud, std::vector<cv::Mat>& output_cloud, int curr_flag);	
+	void TransformData(cv::Mat& input_cloud, std::vector<cv::Mat>& output_cloud, int curr_flag);
 	void CalcGradient(std::vector<cv::Mat>& target_cloud, std::vector<cv::Mat>& prediction_cloud, std::vector<cv::Mat>& query_cloud, cv::Mat& feature, std::vector<int>& segmentation_count);
-    void CalcGradient(std::vector<cv::Mat>& matched_target_cloud, std::vector<cv::Mat>& prediction_cloud, std::vector<cv::Mat>& query_cloud, cv::Mat& feature, std::vector<cv::Mat>& probabilities);
+    void CalcGradient(std::vector<cv::Mat>& matched_target_cloud, std::vector<cv::Mat>& prediction_cloud, std::vector<cv::Mat>& query_cloud, cv::Mat& feature, std::vector<double>& probabilities);
 	void cv2eigen(const cv::Mat& input, Eigen::Matrix4d& output);
 	// gradients		
 	void Update(int iter);
-	void Update();
 	void CopyTransformToPrev();
 	// calculate inverse transformation			
 	
@@ -109,9 +104,7 @@ public:
 	cv::Mat TransformToNextFrame(cv::Mat& prev_img_point);
 	void Rejection(cv::Mat& diff, cv::Mat& filtered_diff, cv::Mat& query_cloud, cv::Mat& filtered_query_cloud, double threshold);
 	void SegmentationAndUpdate(std::vector<cv::Mat>& prev_home_cloud, std::vector<cv::Mat>& home_cloud, cv::Mat& query_cloud, cv::Mat& feature, int iteration_count);
-	void SegmentationAndUpdateFixedHomePos(std::vector<cv::Mat>& home_cloud, cv::Mat& query_cloud, cv::Mat& feature, int iteration_count);
-	void ShowHomePoseLabel();
-	// void GetNearestNeighborMatches(cv::Mat& target_cloud, cv::Mat& prediction_cloud, cv::Mat& matched_target_cloud, cv::Mat& cost, int cost_flag);
+	void GetNearestNeighborMatches(cv::Mat& target_cloud, cv::Mat& prediction_cloud, cv::Mat& matched_target_cloud, cv::Mat& cost, int cost_flag);
 	void set_w_rate(double w_rate);
 	void set_w_natural_rate(double natural_rate);
 	// void SetLearningRate(double rate)
@@ -124,9 +117,7 @@ public:
 	cv::Mat transform_inv(int idx);
 	cv::Mat prev_transform_inv(int idx);
 	cv::Mat w_grad(int idx);
-	std::vector<cv::Mat> w_grad();
 	void set_w(cv::Mat& w, int idx);	
-	cv::Mat get_w(int idx);
 	void set_fisher_inv();
 	
 	// check gradient
@@ -135,7 +126,8 @@ public:
 	void ReOrder_Trans(std::vector<cv::Mat>& input, std::vector<cv::Mat>& output, std::vector<cv::Mat>& input_indices);
 
     // functions for segmentation
-    void SetHomeCloud(std::vector<cv::Mat>& home_cloud);     
+    void SetHomeCloud(std::vector<cv::Mat>& home_cloud); 
+    void SegmentationAndUpdateFixedHomePos(std::vector<cv::Mat>& prev_home_cloud, std::vector<cv::Mat>& home_cloud, cv::Mat& query_cloud, cv::Mat& feature, int iteration_count);
 
 
 };

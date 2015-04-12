@@ -16,6 +16,7 @@ public:
     static void AppendMatFloat(cv::Mat& src, int h, int w, std::string name);
     static void RecordMatDouble(cv::Mat& src, int h, int w, std::string name, int append_flag);
     static void WriteMatDouble(cv::Mat& src, int h, int w, std::string name);
+	static std::string ReadFileString(std::string name);
 };
 
 #endif
