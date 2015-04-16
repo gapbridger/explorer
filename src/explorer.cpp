@@ -67,12 +67,14 @@ Explorer::Explorer(int id,
 	joint_range_limit_ = cv::Mat::zeros(num_joints_, 2, CV_64F);
 	joint_idx.copyTo(joint_idx_);
 	joint_range_limit.copyTo(joint_range_limit_);
+
 	
 	neighborhood_range_ = neighborhood_range;
 	icm_beta_ = icm_beta;
 	icm_sigma_ = icm_sigma;
 	icm_iteration_ = icm_iteration;
 	max_num_neighbors_ = max_num_neighbors;
+
 }
 
 Explorer::~Explorer()
@@ -105,9 +107,7 @@ void Explorer::Train()
 	loader.FormatTrendDirectory();
 	loader.LoadProprioception(train_data_size_, test_data_size_, train_prop_, test_prop_, home_prop_, train_target_idx_, test_target_idx_, joint_idx_);	
 	LoadHomeCloud(loader);
-	// initialize probabilities to be equal...
-	weight_label_probabilities_ = cv::Mat::zeros(home_cloud_[0].rows, num_joints_, CV_64F) + 1 / num_joints_;
-	cv::Mat home_cloud_weight_label = cv::Mat::zeros(home_cloud_[0].rows, num_joints_, CV_64F);
+	cv::Mat home_cloud_label = cv::Mat::zeros(home_cloud_[0].rows, num_joints_, CV_64F);
 	cv::Mat potential = cv::Mat::zeros(home_cloud_[0].rows, num_joints_, CV_64F);
 	// some parameters need to be externalized
 	cv::Mat home_cloud_neighbor_indices, home_cloud_neighbor_dists;
@@ -160,12 +160,12 @@ void Explorer::Train()
 				target_cloud_kd_trees.knnSearch(predicted_cloud_f, indices[i], min_dists[i], 1, cv::flann::SearchParams(64)); // kd tree search, index indices the matches in query cloud
 			}
 			if(iteration_count == 1)
-				InitializeModelLabel(min_dists, num_joints_, icm_sigma_, home_cloud_weight_label, weight_label_probabilities_);
+				InitializeModelLabel(min_dists, num_joints_, home_cloud_label);
 			else
-				IteratedConditionalModes(home_cloud_neighbor_indices, min_dists, home_cloud_weight_label, potential, num_joints_, icm_iteration_, max_num_neighbors_, icm_beta_, icm_sigma_); // update label, only one iteration first...
+				IteratedConditionalModes(home_cloud_neighbor_indices, min_dists, home_cloud_label, potential, num_joints_, icm_iteration_, max_num_neighbors_, icm_beta_, icm_sigma_); // update label, only one iteration first...
 			// shuffle points according to label
-			// Segment(matched_target_cloud, home_cloud_weight_label, cloud_, indices, num_joints_); // output memory allocated inside function
-			Segment(segmented_target_cloud, segmented_home_cloud, segmented_prediction_cloud, home_cloud_weight_label, cloud_, home_cloud_[0], predicted_cloud_, indices, num_joints_);
+			// Segment(matched_target_cloud, home_cloud_label, cloud_, indices, num_joints_); // output memory allocated inside function
+			Segment(segmented_target_cloud, segmented_home_cloud, segmented_prediction_cloud, home_cloud_label, cloud_, home_cloud_[0], predicted_cloud_, indices, num_joints_);
 			// update weights, matched target cloud should be a vector...
 			// transform_.CalculateGradient(segmented_target_cloud, predicted_cloud_, home_cloud_, feature_); // target, prediction, query, without label...
 			transform_.CalculateGradient(segmented_target_cloud, segmented_prediction_cloud, segmented_home_cloud, feature_); // target, prediction, query, without label...
@@ -295,63 +295,41 @@ void Explorer::BuildModelGraph(const cv::Mat& home_cloud, int num_joints, cv::Ma
 }
 
 // todo: model class, refactoring later
-void Explorer::InitializeModelLabel(
-	const std::vector<cv::Mat>& min_dists, 
-	int num_joints, 
-	double sigma,
-	cv::Mat& home_cloud_weight_label,
-	cv::Mat& weight_label_probabilities)
+void Explorer::InitializeModelLabel(const std::vector<cv::Mat>& min_dists, int num_joints, cv::Mat& home_cloud_label)
 {
 	// home_cloud_neighbor need to be initialized...
-	int home_cloud_size = home_cloud_weight_label.rows;
+	int home_cloud_size = home_cloud_label.rows;
 	double min_value = 0;
 	double max_value = 0;
 	// update according to maximum likelihood only, without neighborhood constraint...
-	cv::Mat curr_point_min_dists = cv::Mat::zeros(1, num_joints, CV_64F);
-	cv::Mat curr_probabilities = cv::Mat::zeros(1, num_joints, CV_64F);
+	cv::Mat curr_point_min_dists = cv::Mat::zeros(num_joints, 1, CV_64F);
 	cv::Point min_location, max_location;
 	min_location.x = 0; min_location.y = 0; max_location.x = 0; max_location.y = 0;
 	for(int i = 0; i < home_cloud_size; i++)
     {
 		for(int j = 0; j < num_joints; j++)
 		{
-			curr_point_min_dists.at<double>(0, j) = min_dists[j].at<float>(i, 0);
-			curr_probabilities.at<double>(0, j) = exp(-0.5 * min_dists[j].at<float>(i, 0) / (sigma * sigma));
+			curr_point_min_dists.at<double>(j, 0) = min_dists[j].at<float>(i, 0);
 		}
 		cv::minMaxLoc(curr_point_min_dists, &min_value, &max_value, &min_location, &max_location);
-		home_cloud_weight_label.at<double>(i, min_location.x) = 1;
-		// normalize and convert dist to probabilities, just let it be the initial value...
-		cv::normalize(curr_probabilities, weight_label_probabilities.rowRange(i, i + 1), 1.0, 0, cv::NORM_L1);
+		home_cloud_label.at<double>(i, min_location.y) = 1;
 	}
-	// just record the initial probability
-	char output_dir[40];
-	sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Solutions/unified_framework/output/initial_probabilities.bin");
-	FileIO::WriteMatDouble(weight_label_probabilities, weight_label_probabilities.rows, weight_label_probabilities.cols, output_dir);
 }
 
 // iterated conditional convergence algorithm, beta: the weight of neighborhood, sigam: the standard deviation of error gaussian...
-void Explorer::IteratedConditionalModes(
-	const cv::Mat& home_cloud_neighbor_indices, 
-	const std::vector<cv::Mat>& min_dists, 
-	cv::Mat& home_cloud_weight_label, 
-	cv::Mat& potential, 
-	int num_joints, 
-	int icm_iterations, 
-	int max_num_neighbors, 
-	double beta, 
-	double sigma) 
+void Explorer::IteratedConditionalModes(const cv::Mat& home_cloud_neighbor_indices, const std::vector<cv::Mat>& min_dists, cv::Mat& home_cloud_label, cv::Mat& potential, int num_joints, int icm_iterations, int max_num_neighbors, double beta, double sigma) 
 {
-	int cloud_size = home_cloud_weight_label.rows;
+	int cloud_size = home_cloud_label.rows;
 	double min_value = 0;
 	double max_value = 0;
 	cv::Point min_location, max_location;
 	cv::Mat tmp_mat_1, tmp_mat_2, tmp_zeros;
 	cv::Mat dist_likelihood = cv::Mat::zeros(1, num_joints, CV_64F);
 	min_location.x = 0; min_location.y = 0; max_location.x = 0; max_location.y = 0;
-	cv::Mat new_home_cloud_weight_label; 
+	cv::Mat new_home_cloud_label; 
 	for(int iter_idx = 0; iter_idx < icm_iterations; iter_idx++)
 	{
-		new_home_cloud_weight_label = cv::Mat::zeros(home_cloud_weight_label.rows, home_cloud_weight_label.cols, CV_64F);
+		new_home_cloud_label = cv::Mat::zeros(home_cloud_label.rows, home_cloud_label.cols, CV_64F);
 		for(int point_idx = 0; point_idx < cloud_size; point_idx++)
 		{
 			cv::Mat label_count = cv::Mat::zeros(1, num_joints, CV_64F);
@@ -361,7 +339,7 @@ void Explorer::IteratedConditionalModes(
 				int neighbor_point_idx = home_cloud_neighbor_indices.at<int>(point_idx, neighbor_idx);
 				if(neighbor_point_idx != -1)
 				{
-					label_count = label_count + home_cloud_weight_label.rowRange(neighbor_point_idx, neighbor_point_idx + 1); 
+					label_count = label_count + home_cloud_label.rowRange(neighbor_point_idx, neighbor_point_idx + 1); 
 				}
 				else
 				{
@@ -377,16 +355,20 @@ void Explorer::IteratedConditionalModes(
 			for(int joint_idx = 0; joint_idx < num_joints; joint_idx++)
 			{
 				// gaussian... zero mean, min dist is already squared...
+				// dist_likelihood.at<double>(0, joint_idx) = (1 / (sigma * sqrt(2 * PI))) * exp(-0.5 * min_dists[joint_idx].at<float>(point_idx, 0) / (sigma * sigma));
 				dist_likelihood.at<double>(0, joint_idx) = exp(-0.5 * min_dists[joint_idx].at<float>(point_idx, 0) / (sigma * sigma));
 			}
 			// multiply together...
 			potential.rowRange(point_idx, point_idx + 1) = potential.rowRange(point_idx, point_idx + 1).mul(dist_likelihood);
+			// dist_likelihood.copyTo(potential.rowRange(point_idx, point_idx + 1)); //  = potential.rowRange(point_idx, point_idx + 1).mul(dist_likelihood);
 			cv::minMaxLoc(potential.rowRange(point_idx, point_idx + 1), &min_value, &max_value, &min_location, &max_location);
 			tmp_zeros = cv::Mat::zeros(1, num_joints, CV_64F);
-			tmp_zeros.copyTo(new_home_cloud_weight_label.rowRange(point_idx, point_idx + 1));
-			new_home_cloud_weight_label.at<double>(point_idx, max_location.x) = 1;
+			// tmp_zeros.copyTo(home_cloud_label.rowRange(point_idx, point_idx + 1));
+			// home_cloud_label.at<double>(point_idx, max_location.x) = 1;
+			tmp_zeros.copyTo(new_home_cloud_label.rowRange(point_idx, point_idx + 1));
+			new_home_cloud_label.at<double>(point_idx, max_location.x) = 1;
 		}
-		new_home_cloud_weight_label.copyTo(home_cloud_weight_label);
+		new_home_cloud_label.copyTo(home_cloud_label);
 	}
 }
 
@@ -402,7 +384,7 @@ void Explorer::LoadHomeCloud(Loader& loader)
 void Explorer::Segment(std::vector<cv::Mat>& segmented_target_cloud, 
 					   std::vector<cv::Mat>& segmented_home_cloud, 
 					   std::vector<cv::Mat>& segmented_prediction_cloud, 
-					   const cv::Mat& home_cloud_weight_label, 
+					   const cv::Mat& home_cloud_label, 
 					   const cv::Mat& target_cloud, 
 					   const cv::Mat& home_cloud, 
 					   const std::vector<cv::Mat>& prediction_cloud, 
@@ -423,7 +405,7 @@ void Explorer::Segment(std::vector<cv::Mat>& segmented_target_cloud,
 	for(int p = 0; p < indices[0].rows; p++)
 	{
 		
-		cv::minMaxLoc(home_cloud_weight_label.rowRange(p, p + 1), &min_value, &max_value, &min_location, &max_location);
+		cv::minMaxLoc(home_cloud_label.rowRange(p, p + 1), &min_value, &max_value, &min_location, &max_location);
 		int label_idx = max_location.x;
 		int curr_idx = indices[label_idx].at<int>(p, 0);
 		int curr_count = count.at<int>(label_idx, 0);
@@ -847,5 +829,5 @@ void Explorer::Mat2PCD(cv::Mat& cloud_mat, pcl::PointCloud<pcl::PointXYZ>::Ptr& 
 	FileIO::WriteMatInt(home_cloud_neighbor_indices, home_cloud.rows, max_num_neighbor, output_dir);
 	sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Solutions/unified_framework/test/home_cloud_min_dists.bin");
 	FileIO::WriteMatFloat(home_cloud_neighbor_dists, home_cloud.rows, max_num_neighbor, output_dir);
-	sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Solutions/unified_framework/test/home_cloud_weight_label.bin");
-	FileIO::WriteMatDouble(home_cloud_weight_label, home_cloud.rows, num_joints, output_dir);*/
+	sprintf(output_dir, "D:/Document/HKUST/Year 5/Research/Solutions/unified_framework/test/home_cloud_label.bin");
+	FileIO::WriteMatDouble(home_cloud_label, home_cloud.rows, num_joints, output_dir);*/

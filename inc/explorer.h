@@ -77,8 +77,6 @@ private:
 	std::vector<double> prev_targets_;
 	std::vector<std::vector<double>> path_;
 	std::vector<double> kernel_list_;
-	cv::Mat weight_label_probabilities_;
-	// std::vector<cv::Mat> home_cloud_link_label_probabilities_;
 
 	cv::Mat joint_idx_;
 	cv::Mat joint_range_limit_;
@@ -104,7 +102,7 @@ private:
 	cv::Mat cloud_;
 	cv::Mat prev_cloud_;
 	std::vector<cv::Mat> home_cloud_;
-	cv::Mat home_cloud_weight_label_; // number of clouds are treated as number of columns
+	cv::Mat home_cloud_label_; // number of clouds are treated as number of columns
 	cv::Mat home_cloud_indices_;
 	cv::Mat home_cloud_min_dists_;
 	std::vector<cv::Mat> predicted_cloud_;
@@ -143,7 +141,7 @@ public:
 	void ReOrder(cv::Mat& input, cv::Mat& output, cv::Mat& input_indices);
 	void RecordingTrend(Transform& transform, Loader& loader, std::vector<std::vector<double>>& trend_array, int iter, int write_trend_interval, int aim_idx);
 	static void BuildModelGraph(const cv::Mat& home_cloud, int num_joints, cv::Mat& home_cloud_indices, cv::Mat& home_cloud_min_dists, double neighborhood_range, int max_num_neighbors);
-	static void InitializeModelLabel(const std::vector<cv::Mat>& min_dists, int num_joints, double sigma, cv::Mat& home_cloud_label, cv::Mat& weight_label_probabilities);
+	static void InitializeModelLabel(const std::vector<cv::Mat>& min_dists, int num_joints, cv::Mat& home_cloud_label);
 	static void IteratedConditionalModes(const cv::Mat& home_cloud_neighbor_indices, const std::vector<cv::Mat>& min_dists, cv::Mat& home_cloud_label, cv::Mat& potential, int num_joints, int icm_iterations, int max_num_neighbors, double beta, double sigma);
 	void UpdateTransform();
 };
