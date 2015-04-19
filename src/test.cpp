@@ -111,7 +111,7 @@ TEST_F(UnifiedLearningTest, TestCalculateGradient)
 	cv::randu(feature, cv::Scalar::all(0), cv::Scalar::all(1));
 	Transform transform(dim_transform, num_joint, 0.01);
 	transform.CalcTransformation(feature);
-	transform.TransformCloud(query_cloud, transform.get_transform(), predicted_cloud);
+	transform.TransformCloud(query_cloud[0], transform.get_transform(), predicted_cloud);
 	transform.CalculateGradient(target_cloud, predicted_cloud, query_cloud, feature);
 	w_grad = transform.w_grad();
 
@@ -130,7 +130,7 @@ TEST_F(UnifiedLearningTest, TestCalculateGradient)
 				new_w = transform.get_w(idx) + disturb;
 				transform.set_w(new_w, idx);
 				transform.CalcTransformation(feature);
-				transform.TransformCloud(query_cloud, transform.get_transform(), predicted_cloud);
+				transform.TransformCloud(query_cloud[0], transform.get_transform(), predicted_cloud);
 				diff = predicted_cloud[idx] - target_cloud[idx];
 				cv::reduce(diff.mul(diff) / 2, diff, 1, CV_REDUCE_SUM);
 				cv::reduce(diff, dist, 0, CV_REDUCE_AVG);
@@ -140,7 +140,7 @@ TEST_F(UnifiedLearningTest, TestCalculateGradient)
 				new_w = transform.get_w(idx) - 2 * disturb;
 				transform.set_w(new_w, idx);
 				transform.CalcTransformation(feature);
-				transform.TransformCloud(query_cloud, transform.get_transform(), predicted_cloud);
+				transform.TransformCloud(query_cloud[0], transform.get_transform(), predicted_cloud);
 				diff = predicted_cloud[idx] - target_cloud[idx];
 				cv::reduce(diff.mul(diff) / 2, diff, 1, CV_REDUCE_SUM);
 				cv::reduce(diff, dist, 0, CV_REDUCE_AVG);
@@ -299,3 +299,12 @@ TEST_F(UnifiedLearningTest, TestIteratedConditionalMode)
 	}
 }
 
+//TEST_F(UnifiedLearningTest, TestLoadCloudInBatch)
+//{
+//	std::vector<cv::Mat> cloud_batch;
+//	Loader loader(12, 2, 8, 25, 45, "december_13_2013");
+//	loader.FormatWeightsForTestDirectory();
+//	loader.FormatTrendDirectory();
+//	Explorer::LoadCloudInBatch(loader, 17005, cloud_batch);
+//}
+//

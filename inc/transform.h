@@ -92,8 +92,9 @@ public:
 	void CalcTransformInv(cv::Mat& feature);
 	void CalcTransformation(cv::Mat& feature);
 	void SetTransformationByElements(cv::Mat& transform, const cv::Mat& elements);
-	void TransformCloud(const std::vector<cv::Mat>& input_cloud, const std::vector<cv::Mat>& transforms, std::vector<cv::Mat>& output_cloud);
+	void TransformCloud(const cv::Mat& input_cloud, const std::vector<cv::Mat>& transforms, std::vector<cv::Mat>& output_cloud);
 	void CalculateGradient(const std::vector<cv::Mat>& matched_target_cloud, const std::vector<cv::Mat>& prediction_cloud, const std::vector<cv::Mat>& query_cloud, const cv::Mat& feature);
+	void CalculateGradientBatch(const std::vector<std::vector<cv::Mat>>& matched_target_cloud, const std::vector<std::vector<cv::Mat>>& prediction_cloud, const std::vector<std::vector<cv::Mat>>& query_cloud, const cv::Mat& feature_batch);
 	std::vector<cv::Mat> get_transform();
 	void CalcGradient(std::vector<cv::Mat>& target_cloud, std::vector<cv::Mat>& prediction_cloud, std::vector<cv::Mat>& query_cloud, cv::Mat& feature, std::vector<int>& segmentation_count);
     void CalcGradient(std::vector<cv::Mat>& matched_target_cloud, std::vector<cv::Mat>& prediction_cloud, std::vector<cv::Mat>& query_cloud, cv::Mat& feature, std::vector<cv::Mat>& probabilities);

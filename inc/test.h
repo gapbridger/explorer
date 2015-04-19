@@ -1,7 +1,7 @@
 #include "gtest/gtest.h"
-#include "explorer.h"
-#include "loader.h"
-#include "fio.h"
+#include "../inc/explorer.h"
+#include "../inc/loader.h"
+#include "../inc/fio.h"
 
 class UnifiedLearningTest:public ::testing::Test
 {

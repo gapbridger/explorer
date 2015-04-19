@@ -98,10 +98,10 @@ void Transform::SetTransformationByElements(cv::Mat& transform, const cv::Mat& e
 	transform.rowRange(0, dim_transform - 1) = identity.rowRange(0, dim_transform - 1) + elements.reshape(1, transform_dim_ - 1);
 }
 
-void Transform::TransformCloud(const std::vector<cv::Mat>& input_cloud, const std::vector<cv::Mat>& transforms, std::vector<cv::Mat>& output_cloud)
+void Transform::TransformCloud(const cv::Mat& input_cloud, const std::vector<cv::Mat>& transforms, std::vector<cv::Mat>& output_cloud)
 {
 	for(int i = 0; i < num_joints_; i++)
-		output_cloud[i] = input_cloud[i] * transforms[i].t();          
+		output_cloud[i] = input_cloud * transforms[i].t();          
 }
 
 void Transform::CalculateGradient(const std::vector<cv::Mat>& matched_target_cloud, 
@@ -121,6 +121,46 @@ void Transform::CalculateGradient(const std::vector<cv::Mat>& matched_target_clo
 			transform_grad = transform_grad.reshape(1, num_weights_);
 			w_grad_[i] = transform_grad * feature.t();
 		}
+	}
+}
+
+void Transform::CalculateGradientBatch(const std::vector<std::vector<cv::Mat>>& matched_target_cloud, 
+								  const std::vector<std::vector<cv::Mat>>& prediction_cloud, 
+								  const std::vector<std::vector<cv::Mat>>& query_cloud, 
+								  const cv::Mat& feature_batch)
+{
+    // the cloud should be n by 4...        
+	
+	int num_cloud = query_cloud.size();
+	std::vector<cv::Mat> transform_grad_batch(num_joints_);
+	cv::Mat non_empty_cloud_feature = cv::Mat::zeros(feature_batch.rows, feature_batch.cols, CV_64F);
+	for(int joint_idx = 0; joint_idx < num_joints_; joint_idx++)
+	{
+		transform_grad_batch[joint_idx] = cv::Mat::zeros(num_weights_, num_cloud, CV_64F);
+		int non_empty_cloud_count = 0;
+		for(int cloud_idx = 0; cloud_idx < num_cloud; cloud_idx++)
+		{
+			if(prediction_cloud[cloud_idx][joint_idx].rows != 0)
+			{
+				int dim_transform = query_cloud[cloud_idx][0].cols;
+				cv::Mat diff, transform_grad;      
+				diff = prediction_cloud[cloud_idx][joint_idx] - matched_target_cloud[cloud_idx][joint_idx];
+				transform_grad = 1.0 / query_cloud[cloud_idx][joint_idx].rows * diff.colRange(0, dim_transform - 1).t() * query_cloud[cloud_idx][joint_idx];
+				transform_grad = transform_grad.reshape(1, num_weights_);
+				transform_grad.copyTo(transform_grad_batch[joint_idx].colRange(non_empty_cloud_count, non_empty_cloud_count + 1));
+				if(joint_idx == 0)
+				{
+					feature_batch.colRange(cloud_idx, cloud_idx + 1).copyTo(non_empty_cloud_feature.colRange(non_empty_cloud_count, non_empty_cloud_count + 1));
+				}
+				non_empty_cloud_count++;
+			}
+		}
+		transform_grad_batch[joint_idx] = transform_grad_batch[joint_idx].colRange(0, non_empty_cloud_count);
+		if(joint_idx == 0)
+		{
+			non_empty_cloud_feature = non_empty_cloud_feature.colRange(0, non_empty_cloud_count);
+		}
+		w_grad_[joint_idx] = transform_grad_batch[joint_idx] * non_empty_cloud_feature.t() / (non_empty_cloud_count * 1.0);
 	}
 }
 

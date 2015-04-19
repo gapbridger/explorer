@@ -57,7 +57,7 @@ Explorer::Explorer(int id,
 	aim_idx_matrix_ = cv::Mat::zeros(train_data_size_, 1, CV_64F);
 	feature_ = cv::Mat::zeros(dim_feature_, 1, CV_64F);	
 	feature_home_ = cv::Mat::zeros(dim_feature_, 1, CV_64F);	
-	home_cloud_ = std::vector<cv::Mat>(num_joints_);
+	// home_cloud_ = std::vector<cv::Mat>(num_joints_);
 	predicted_cloud_ = std::vector<cv::Mat>(num_joints_);
 	joint_idx.copyTo(joint_idx_);
 	explore_path_kdtree_indices_ = cv::Mat::zeros(train_data_size_, 1, CV_32S);
@@ -80,6 +80,169 @@ Explorer::Explorer(int id,
 Explorer::~Explorer()
 {
 }
+
+
+void Explorer::BatchTrain()
+{
+	char input_dir[400];
+	char output_dir[400];	
+	int record_trend_interval = 2;
+	int record_diagnosis_interval = 2;
+	int home_frame_idx = 0;
+	cv::Mat initial_cloud_display = cv::Mat::zeros(num_joints_, 1, CV_64F);
+	// temporary float variables
+	std::mt19937 engine(rd_());		
+	cv::Mat predicted_cloud_f; 
+	cv::Mat train_prop_f;
+	cv::Mat cloud_f;
+	std::vector<cv::Mat> cloud_f_batch(train_data_size_);
+	// batch variables...
+	std::vector<cv::Mat> cloud_batch(train_data_size_);
+	std::vector<std::vector<cv::Mat>> predicted_cloud_batch(train_data_size_, std::vector<cv::Mat>(num_joints_));
+	std::vector<cv::flann::Index> cloud_kd_tree_batch;
+	std::vector<std::vector<cv::Mat>> indices_batch(train_data_size_, std::vector<cv::Mat>(num_joints_));
+    std::vector<std::vector<cv::Mat>> min_dists_batch(train_data_size_, std::vector<cv::Mat>(num_joints_));    
+	cv::Mat feature_batch = cv::Mat::zeros(dim_feature_, train_data_size_, CV_64F);
+	// segmentation variables
+	std::vector<std::vector<cv::Mat>> segmented_target_cloud(train_data_size_, std::vector<cv::Mat>(num_joints_));
+	std::vector<std::vector<cv::Mat>> segmented_home_cloud(train_data_size_, std::vector<cv::Mat>(num_joints_));
+	std::vector<std::vector<cv::Mat>> segmented_prediction_cloud(train_data_size_, std::vector<cv::Mat>(num_joints_));
+	std::vector<cv::Mat> avg_min_dists(num_joints_);
+	// others	
+	std::vector<std::vector<double>> trend_array(num_trend_, std::vector<double>(0));
+	cv::Mat home_cloud_neighbor_indices, home_cloud_neighbor_dists;
+	// loader initialization
+	Loader loader(num_weights_, num_joints_, dim_feature_, num_trend_, id_, data_set_);
+	loader.FormatWeightsForTestDirectory();
+	loader.FormatTrendDirectory();
+	// load proprioception
+	loader.LoadProprioception(train_data_size_, test_data_size_, train_prop_, test_prop_, home_prop_, train_target_idx_, test_target_idx_, joint_idx_);	
+	train_prop_.convertTo(train_prop_f, CV_32F);
+	home_frame_idx = train_target_idx_.at<double>(0, 0);
+	// loading cloud
+	loader.LoadBinaryPointCloud(home_cloud_, home_frame_idx);
+	cv::Mat home_cloud_label = cv::Mat::zeros(home_cloud_.rows, num_joints_, CV_64F);
+	cv::Mat potential = cv::Mat::zeros(home_cloud_.rows, num_joints_, CV_64F);
+	
+	LoadCloudInBatch(loader, train_data_size_, cloud_batch);
+	// initialize home cloud neighbors	
+	BuildModelGraph(home_cloud_, num_joints_, home_cloud_neighbor_indices, home_cloud_neighbor_dists, neighborhood_range_, max_num_neighbors_);
+	cv::flann::Index kd_trees(train_prop_f, cv::flann::KDTreeIndexParams(4), cvflann::FLANN_DIST_EUCLIDEAN); // build kd tree
+	// initialize home feature 
+	cv::Mat feature_zero = cv::Mat::zeros(dim_feature_, 1, CV_64F);	
+	SetFeature(feature_home_, feature_zero, num_joints_, home_prop_);
+	// initialize data batch needed including feature and kd trees
+	for(int i = 0; i < train_data_size_; i++)
+	{
+		curr_prop_ = train_prop_.rowRange(i, i + 1);
+		SetFeature(feature_batch.colRange(i, i + 1), feature_home_, num_joints_, curr_prop_);
+	}
+	cv::Mat scale = cv::Mat::zeros(num_joints_, 2, CV_64F);
+	for(int i = 0; i < num_joints_; i++)
+	{
+		scale.at<double>(i, 0) = joint_range_limit_.at<double>(i, 0) - home_prop_.at<double>(0, i);
+		scale.at<double>(i, 1) = joint_range_limit_.at<double>(i, 1) - home_prop_.at<double>(0, i);
+	}
+
+	
+
+	// always start from home pose
+	/********************* just for display ************************/
+	boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer;
+	viewer = boost::shared_ptr<pcl::visualization::PCLVisualizer>(new pcl::visualization::PCLVisualizer("cloud Viewer"));
+	viewer->setBackgroundColor(0, 0, 0);	
+	viewer->initCameraParameters();	
+	/********************* just for display ************************/
+
+	for(unsigned long iteration_count = 0; iteration_count < train_iteration_; iteration_count++)
+	{		
+		// initialize avg_min_dists
+		for(int i = 0; i < num_joints_; i++)
+		{
+			avg_min_dists[i] = cv::Mat::zeros(home_cloud_.rows, 1, CV_32F);
+		}
+		int batch_size = 20;
+		cv::Mat aim_indices_batch;
+		GenerateAimIndexBatch(engine, kd_trees, aim_indices_batch, batch_size, iteration_count, scale);
+		for(int i = 0; i < batch_size; i++)
+		{
+			int cloud_idx = aim_indices_batch.at<int>(i, 0);
+			transform_.CalcTransformation(feature_batch.colRange(cloud_idx, cloud_idx + 1));
+			transform_.TransformCloud(home_cloud_, transform_.get_transform(), predicted_cloud_batch[cloud_idx]); // need to investigate home cloud issue
+			cloud_batch[cloud_idx].convertTo(cloud_f, CV_32F);
+			cv::flann::Index curr_cloud_kd_tree(cloud_f, cv::flann::KDTreeIndexParams(4), cvflann::FLANN_DIST_EUCLIDEAN);
+			// cloud_batch[cloud_idx].convertTo(cloud_f, CV_32F);
+			// cv::flann::Index test_kd_tree(cloud_f, cv::flann::KDTreeIndexParams(4), cvflann::FLANN_DIST_EUCLIDEAN); // build kd tree 
+			// need to accumulate the distances...
+			for(int joint_idx = 0; joint_idx < num_joints_; joint_idx++)
+			{       
+				// need to do initialize...
+				indices_batch[cloud_idx][joint_idx] = cv::Mat::zeros(predicted_cloud_batch[cloud_idx][joint_idx].rows, 1, CV_32S);
+				min_dists_batch[cloud_idx][joint_idx] = cv::Mat::zeros(predicted_cloud_batch[cloud_idx][joint_idx].rows, 1, CV_32F);
+				// the value range of indices is the target cloud, e.g. max(indices) = size(cloud_batch[prop_idx]), but the size of indices is the size of home cloud, e.g. size(home_cloud)
+				predicted_cloud_batch[cloud_idx][joint_idx].convertTo(predicted_cloud_f, CV_32F); 		       
+				curr_cloud_kd_tree.knnSearch(predicted_cloud_f, indices_batch[cloud_idx][joint_idx], min_dists_batch[cloud_idx][joint_idx], 1, cv::flann::SearchParams(64)); // kd tree search, index indices the matches in query cloud
+				avg_min_dists[joint_idx] = avg_min_dists[joint_idx] + min_dists_batch[cloud_idx][joint_idx];
+			}
+		}
+		// at this stage, knn search ended, we should now aggregate the results...
+		for(int joint_idx = 0; joint_idx < num_joints_; joint_idx++)
+		{
+			avg_min_dists[joint_idx] = avg_min_dists[joint_idx] / train_data_size_; // train_data_size_;
+		}
+		// get the labels...
+		if(iteration_count == 0)
+			InitializeModelLabel(avg_min_dists, num_joints_, home_cloud_label);
+		else
+			IteratedConditionalModes(home_cloud_neighbor_indices, avg_min_dists, home_cloud_label, potential, num_joints_, icm_iteration_, max_num_neighbors_, icm_beta_, icm_sigma_); // update label, only one iteration first...
+		// segment
+		for(int i = 0; i < batch_size; i++)
+		{
+			int cloud_idx = aim_indices_batch.at<int>(i, 0);
+			Segment(segmented_target_cloud[cloud_idx], segmented_home_cloud[cloud_idx], segmented_prediction_cloud[cloud_idx], home_cloud_label, cloud_batch[cloud_idx], home_cloud_, predicted_cloud_batch[cloud_idx], indices_batch[cloud_idx], num_joints_);
+		}
+		transform_.CalculateGradientBatch(segmented_target_cloud, segmented_prediction_cloud, segmented_home_cloud, feature_batch); // target, prediction, query, without label...
+		transform_.Update();
+		// record data
+		RecordData(loader, trend_array, 0, iteration_count, record_trend_interval, record_diagnosis_interval);
+
+		/******************** just for display ******************/
+		if(iteration_count % 10 == 0)
+		{
+			for(int i = 0; i < num_joints_; i++)
+			{
+				COLOUR c = GetColour(i, 0, num_joints_ - 1);
+				pcl::PointCloud<pcl::PointXYZ>::Ptr segmented_home_cloud_pcd(new pcl::PointCloud<pcl::PointXYZ>); 
+				for(int j = 0; j < batch_size; j++)
+				{
+					int cloud_idx = aim_indices_batch.at<int>(j, 0);
+					if(segmented_home_cloud[cloud_idx][i].rows != 0)
+					{
+						std::cout << "size: " << segmented_home_cloud[cloud_idx][i].rows << " joint: " << i << " frame: " << cloud_idx << std::endl;
+						Mat2PCD(segmented_home_cloud[cloud_idx][i], segmented_home_cloud_pcd);
+						break;
+					}
+				}
+				pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> segmented_home_cloud_color(segmented_home_cloud_pcd, (int)(c.r * 255.0), (int)(c.g * 255.0), (int)(c.b * 255.0));
+				char cloud_name[20];
+				sprintf(cloud_name, "cloud_segment_%d", i);
+				if(iteration_count == 0)
+				{			
+					viewer->addPointCloud<pcl::PointXYZ>(segmented_home_cloud_pcd, segmented_home_cloud_color, cloud_name);	
+				}
+				else
+				{
+					viewer->updatePointCloud<pcl::PointXYZ>(segmented_home_cloud_pcd, segmented_home_cloud_color, cloud_name);
+				}
+			}
+			viewer->spinOnce(10.0); // ms as unit
+		}
+		/******************** just for display ******************/
+		ShowLearningProgress(iteration_count);
+	}	
+}
+
+
 
 void Explorer::Train()
 {
@@ -106,12 +269,13 @@ void Explorer::Train()
 	loader.FormatWeightsForTestDirectory();
 	loader.FormatTrendDirectory();
 	loader.LoadProprioception(train_data_size_, test_data_size_, train_prop_, test_prop_, home_prop_, train_target_idx_, test_target_idx_, joint_idx_);	
-	LoadHomeCloud(loader);
-	cv::Mat home_cloud_label = cv::Mat::zeros(home_cloud_[0].rows, num_joints_, CV_64F);
-	cv::Mat potential = cv::Mat::zeros(home_cloud_[0].rows, num_joints_, CV_64F);
+	int home_frame_idx = train_target_idx_.at<double>(0, 0);
+	loader.LoadBinaryPointCloud(home_cloud_, home_frame_idx);
+	cv::Mat home_cloud_label = cv::Mat::zeros(home_cloud_.rows, num_joints_, CV_64F);
+	cv::Mat potential = cv::Mat::zeros(home_cloud_.rows, num_joints_, CV_64F);
 	// some parameters need to be externalized
 	cv::Mat home_cloud_neighbor_indices, home_cloud_neighbor_dists;
-	BuildModelGraph(home_cloud_[0], num_joints_, home_cloud_neighbor_indices, home_cloud_neighbor_dists, neighborhood_range_, max_num_neighbors_);
+	BuildModelGraph(home_cloud_, num_joints_, home_cloud_neighbor_indices, home_cloud_neighbor_dists, neighborhood_range_, max_num_neighbors_);
 	train_prop_.convertTo(train_prop_f, CV_32F);
 	cv::flann::Index kd_trees(train_prop_f, cv::flann::KDTreeIndexParams(4), cvflann::FLANN_DIST_EUCLIDEAN); // build kd tree
 	
@@ -165,7 +329,7 @@ void Explorer::Train()
 				IteratedConditionalModes(home_cloud_neighbor_indices, min_dists, home_cloud_label, potential, num_joints_, icm_iteration_, max_num_neighbors_, icm_beta_, icm_sigma_); // update label, only one iteration first...
 			// shuffle points according to label
 			// Segment(matched_target_cloud, home_cloud_label, cloud_, indices, num_joints_); // output memory allocated inside function
-			Segment(segmented_target_cloud, segmented_home_cloud, segmented_prediction_cloud, home_cloud_label, cloud_, home_cloud_[0], predicted_cloud_, indices, num_joints_);
+			Segment(segmented_target_cloud, segmented_home_cloud, segmented_prediction_cloud, home_cloud_label, cloud_, home_cloud_, predicted_cloud_, indices, num_joints_);
 			// update weights, matched target cloud should be a vector...
 			// transform_.CalculateGradient(segmented_target_cloud, predicted_cloud_, home_cloud_, feature_); // target, prediction, query, without label...
 			transform_.CalculateGradient(segmented_target_cloud, segmented_prediction_cloud, segmented_home_cloud, feature_); // target, prediction, query, without label...
@@ -223,7 +387,8 @@ void Explorer::Test(bool single_frame, bool display, int test_idx)
 	loader.FormatWeightsForTestDirectory();
 	loader.LoadProprioception(train_data_size_, test_data_size_, train_prop_, test_prop_, home_prop_, train_target_idx_, test_target_idx_, joint_idx_);	
 	loader.LoadWeightsForTest(transform_);
-	LoadHomeCloud(loader);
+	int home_frame_idx = train_target_idx_.at<double>(0, 0);
+	loader.LoadBinaryPointCloud(home_cloud_, home_frame_idx);
 	cv::Mat feature_zero = cv::Mat::zeros(dim_feature_, 1, CV_64F);	
 	SetFeature(feature_home_, feature_zero, num_joints_, home_prop_);
 	boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer;
@@ -372,12 +537,17 @@ void Explorer::IteratedConditionalModes(const cv::Mat& home_cloud_neighbor_indic
 	}
 }
 
-void Explorer::LoadHomeCloud(Loader& loader)
+void Explorer::LoadCloudInBatch(Loader& loader, int data_size, std::vector<cv::Mat>& cloud_batch)
 {
-	int home_frame_idx = train_target_idx_.at<double>(0, 0);
-	for(int i = 0; i < num_joints_; i++)
+	cloud_batch = std::vector<cv::Mat>(data_size);
+	std::cout << "start to load cloud data, " << data_size << " cloud to load..." << std::endl;
+	for(int i = 0; i < data_size; i++)
 	{
-		loader.LoadBinaryPointCloud(home_cloud_[i], home_frame_idx);
+		loader.LoadBinaryPointCloud(cloud_batch[i], i);
+		if(i % 500 == 1)
+		{
+			std::cout << i << " cloud loaded..." << std::endl;
+		}
 	}
 }
 
@@ -407,7 +577,7 @@ void Explorer::Segment(std::vector<cv::Mat>& segmented_target_cloud,
 		
 		cv::minMaxLoc(home_cloud_label.rowRange(p, p + 1), &min_value, &max_value, &min_location, &max_location);
 		int label_idx = max_location.x;
-		int curr_idx = indices[label_idx].at<int>(p, 0);
+		int curr_idx = indices[label_idx].at<int>(p, 0); // so the value range of index is the target cloud, but the size of index is the home cloud
 		int curr_count = count.at<int>(label_idx, 0);
 		target_cloud.rowRange(curr_idx, curr_idx + 1).copyTo(segmented_target_cloud[label_idx].rowRange(curr_count, curr_count + 1));
 		prediction_cloud[label_idx].rowRange(p, p + 1).copyTo(segmented_prediction_cloud[label_idx].rowRange(curr_count, curr_count + 1));
@@ -424,7 +594,7 @@ void Explorer::Segment(std::vector<cv::Mat>& segmented_target_cloud,
 
 void Explorer::ShowLearningProgress(int iteration_count)
 {
-	if(iteration_count % 20 == 1)			
+	if(iteration_count % 20 == 0)			
 	{
 		std::cout << "iteration: " << iteration_count << std::endl;			
 	}
@@ -533,6 +703,30 @@ int Explorer::GenerateAimIndex(std::mt19937& engine, cv::flann::Index& kd_trees,
 	return aim_idx;
 }
 
+void Explorer::GenerateAimIndexBatch(std::mt19937& engine, cv::flann::Index& kd_trees, cv::Mat& aim_indices_batch, int batch_size, int iteration_count, const cv::Mat& scale)
+{
+	double current_range = 0;
+	current_range = ini_exploration_range_ + (max_exploration_range_ - ini_exploration_range_) * iteration_count / expand_iteration_;	
+	current_range = current_range > max_exploration_range_ ? max_exploration_range_ : current_range;
+	cv::Mat target_locations = cv::Mat::zeros(batch_size, num_joints_, CV_64F);
+	aim_indices_batch = cv::Mat::zeros(batch_size, 1, CV_32S);
+	for(int i = 0; i < num_joints_; i++)
+	{
+		std::uniform_real_distribution<double> uniform(scale.at<double>(i, 0) * current_range + home_prop_.at<double>(0, i), scale.at<double>(i, 1) * current_range + home_prop_.at<double>(0, i));
+		for(int j = 0; j < batch_size; j++)
+		{
+			target_locations.at<double>(j, i) = uniform(engine);
+		}
+	}
+	for(int i = 0; i < batch_size; i++)
+	{
+		cv::Mat tmp_target = cv::Mat::zeros(1, num_joints_, CV_64F);
+		tmp_target = target_locations.rowRange(i, i + 1);
+		tmp_target.convertTo(tmp_target, CV_32F);
+		kd_trees.knnSearch(tmp_target, explore_path_kdtree_indices_, explore_path_kdtree_dists_, 1, cv::flann::SearchParams(64));
+		aim_indices_batch.at<int>(i, 0) = explore_path_kdtree_indices_.at<int>(0, 0);
+	}	
+}		
 
 
 //

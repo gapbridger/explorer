@@ -101,7 +101,7 @@ private:
 
 	cv::Mat cloud_;
 	cv::Mat prev_cloud_;
-	std::vector<cv::Mat> home_cloud_;
+	cv::Mat home_cloud_;
 	cv::Mat home_cloud_label_; // number of clouds are treated as number of columns
 	cv::Mat home_cloud_indices_;
 	cv::Mat home_cloud_min_dists_;
@@ -124,13 +124,16 @@ public:
 	void ShowLearningProgress(int iteration_count);
 	void GenerateLinePath(std::vector<std::vector<double>>& path, std::vector<double>& targets, std::vector<double>& prev_targets);
 	int GenerateAimIndex(std::mt19937& engine, cv::flann::Index& kd_trees, std::vector<int>& path, int iteration_count, const cv::Mat& scale);
+	void GenerateAimIndexBatch(std::mt19937& engine, cv::flann::Index& kd_trees, cv::Mat& aim_indices_batch, int batch_size, int iteration_count, const cv::Mat& scale);
 	void LoadHomeCloud(Loader& loader);
+	static void LoadCloudInBatch(Loader& loader, int data_size, std::vector<cv::Mat>& cloud_batch);
 	int GenerateAimIndexLinePath(std::mt19937& engine, int current_iteration);
 	void Train();
+	void BatchTrain();
 	// void Test(int single_frame_flag, int display_flag, int test_idx);
 	void Test(bool single_frame, bool display, int test_idx);
 	void ShowTransformationGrid(int num_grid, int weight_idx);
-	void Explorer::LearningFromPointCloudTest();
+	void LearningFromPointCloudTest();
 	void DownSamplingPointCloud(double voxel_size, pcl::VoxelGrid<pcl::PointXYZ>& voxel_grid, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, pcl::PointCloud<pcl::PointXYZ>::Ptr down_sampled_cloud);
 	void DepthFiltering(float depth, pcl::PassThrough<pcl::PointXYZ>& pass, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, pcl::PointCloud<pcl::PointXYZ>::Ptr filtered_cloud);
 	void ShowCloudSequence();

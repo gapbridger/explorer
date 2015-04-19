@@ -114,7 +114,8 @@ int main(int argc, char* argv[])
 					train_data_size, test_data_size, joint_idx, joint_range_limit, neighborhood_range, icm_iteration, icm_beta, icm_sigma, max_num_neighbors);
 				if(train == true)
 				{
-					explorer.Train();
+					// explorer.Train();
+					explorer.BatchTrain();
 				}
 				else if(test == true)
 				{
